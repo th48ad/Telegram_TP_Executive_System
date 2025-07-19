@@ -110,93 +110,139 @@ class SimpleTelegramListener:
             logger.info("=" * 50)
             logger.info(f"Channels to monitor: {len(self.channel_list)}")
             
+            # Check if we're using direct channel IDs (PREFERRED METHOD)
+            channel_ids = self.config.get_channel_ids()
+            channel_names = self.config.get_channel_names_mapping()
+            
             success_count = 0
-            for i, channel in enumerate(self.channel_list, 1):
-                logger.info(f"\n🔗 Connecting to channel {i}/{len(self.channel_list)}: {channel}")
+            
+            if channel_ids:
+                # PREFERRED: Use direct channel ID lookup (no FloodWaitError)
+                logger.info("🚀 Using DIRECT CHANNEL ID method (avoids FloodWaitError)")
                 
-                try:
-                    entity = None
-                    channel_type = ""
+                for i, channel_id in enumerate(channel_ids, 1):
+                    logger.info(f"\n🔗 Searching for channel {i}/{len(channel_ids)}: ID {channel_id}")
+                    channel_name = channel_names.get(channel_id, f"Channel {channel_id}")
                     
-                    # Handle invite links
-                    if channel.startswith('https://t.me/+'):
-                        hash_match = re.search(r't\.me/\+([a-zA-Z0-9_-]+)', channel)
-                        if hash_match:
-                            invite_hash = hash_match.group(1)
-                            try:
-                                from telethon.tl.functions.messages import ImportChatInviteRequest
-                                result = await self.client(ImportChatInviteRequest(invite_hash))
-                                entity = result.chats[0]
-                                channel_type = "PRIVATE (Joined via invite)"
-                            except UserAlreadyParticipantError:
-                                channel_type = "PRIVATE (Already member)"
-                                # Find the channel in dialogs by known IDs or names
-                                logger.info(f"   Already member - looking for channel in dialogs...")
-                                
-                                # Get channel mappings from configuration
-                                known_channels = self.config.get_channel_mappings()
-                                
-                                if invite_hash in known_channels:
-                                    target_id = known_channels[invite_hash]['id']
-                                    target_name = known_channels[invite_hash]['name']
+                    try:
+                        entity = None
+                        
+                        # Search through user's dialogs to find the channel by ID
+                        async for dialog in self.client.iter_dialogs():
+                            if dialog.entity.id == channel_id:
+                                entity = dialog.entity
+                                logger.info(f"   ✅ Found in dialogs: {entity.title}")
+                                break
+                        
+                        if entity:
+                            self.target_entities.append(entity)
+                            self.channel_info[entity.id] = {
+                                'name': getattr(entity, 'title', channel_name),
+                                'type': "DIRECT_ID (Already member)",
+                                'username': str(channel_id),
+                                'participants': getattr(entity, 'participants_count', 'Unknown')
+                            }
+                            
+                            logger.info(f"✅ Connected: {entity.title} (ID: {entity.id})")
+                            success_count += 1
+                        else:
+                            logger.error(f"❌ Channel ID {channel_id} not found in your dialogs")
+                            logger.error(f"   Hint: Make sure you're a member of '{channel_name}'")
+                            
+                    except Exception as e:
+                        logger.error(f"❌ Error connecting to channel ID {channel_id}: {e}")
+                        logger.error(f"   Error type: {type(e).__name__}")
+            
+            else:
+                # FALLBACK: Use legacy invite link method
+                logger.info("⚠️ Using LEGACY INVITE LINK method (may cause FloodWaitError)")
+                
+                for i, channel in enumerate(self.channel_list, 1):
+                    logger.info(f"\n🔗 Connecting to channel {i}/{len(self.channel_list)}: {channel}")
+                    
+                    try:
+                        entity = None
+                        channel_type = ""
+                        
+                        # Handle invite links
+                        if channel.startswith('https://t.me/+'):
+                            hash_match = re.search(r't\.me/\+([a-zA-Z0-9_-]+)', channel)
+                            if hash_match:
+                                invite_hash = hash_match.group(1)
+                                try:
+                                    from telethon.tl.functions.messages import ImportChatInviteRequest
+                                    result = await self.client(ImportChatInviteRequest(invite_hash))
+                                    entity = result.chats[0]
+                                    channel_type = "PRIVATE (Joined via invite)"
+                                except UserAlreadyParticipantError:
+                                    channel_type = "PRIVATE (Already member)"
+                                    # Find the channel in dialogs by known IDs or names
+                                    logger.info(f"   Already member - looking for channel in dialogs...")
                                     
-                                    async for dialog in self.client.iter_dialogs():
-                                        if dialog.entity.id == target_id:
-                                            entity = dialog.entity
-                                            logger.info(f"   ✅ Found channel by ID: {target_name}")
-                                            break
-                                else:
-                                    # Fallback: try invite link matching (original method)
-                                    async for dialog in self.client.iter_dialogs():
-                                        if hasattr(dialog.entity, 'title') and not hasattr(dialog.entity, 'username'):
-                                            try:
-                                                from telethon.tl.functions.messages import ExportChatInviteRequest
-                                                export = await self.client(ExportChatInviteRequest(dialog.entity))
-                                                if hasattr(export, 'link') and invite_hash in export.link:
-                                                    entity = dialog.entity
-                                                    break
-                                            except:
-                                                continue
+                                    # Get channel mappings from configuration
+                                    known_channels = self.config.get_channel_mappings()
+                                    
+                                    if invite_hash in known_channels:
+                                        target_id = known_channels[invite_hash]['id']
+                                        target_name = known_channels[invite_hash]['name']
+                                        
+                                        async for dialog in self.client.iter_dialogs():
+                                            if dialog.entity.id == target_id:
+                                                entity = dialog.entity
+                                                logger.info(f"   ✅ Found channel by ID: {target_name}")
+                                                break
+                                    else:
+                                        # Fallback: try invite link matching (original method)
+                                        async for dialog in self.client.iter_dialogs():
+                                            if hasattr(dialog.entity, 'title') and not hasattr(dialog.entity, 'username'):
+                                                try:
+                                                    from telethon.tl.functions.messages import ExportChatInviteRequest
+                                                    export = await self.client(ExportChatInviteRequest(dialog.entity))
+                                                    if hasattr(export, 'link') and invite_hash in export.link:
+                                                        entity = dialog.entity
+                                                        break
+                                                except:
+                                                    continue
+                                except Exception as e:
+                                    logger.error(f"❌ Failed to join via invite: {e}")
+                                    logger.error(f"   Invite hash: {invite_hash}")
+                                    logger.error(f"   Error type: {type(e).__name__}")
+                        
+                        # Handle public channels or usernames
+                        else:
+                            try:
+                                entity = await self.client.get_entity(channel)
+                                channel_type = "PUBLIC"
                             except Exception as e:
-                                logger.error(f"❌ Failed to join via invite: {e}")
-                                logger.error(f"   Invite hash: {invite_hash}")
+                                logger.error(f"❌ Failed to get entity for {channel}: {e}")
                                 logger.error(f"   Error type: {type(e).__name__}")
-                    
-                    # Handle public channels or usernames
-                    else:
-                        try:
-                            entity = await self.client.get_entity(channel)
-                            channel_type = "PUBLIC"
-                        except Exception as e:
-                            logger.error(f"❌ Failed to get entity for {channel}: {e}")
-                            logger.error(f"   Error type: {type(e).__name__}")
-                            continue
-                    
-                    if entity:
-                        self.target_entities.append(entity)
-                        self.channel_info[entity.id] = {
-                            'name': getattr(entity, 'title', channel),
-                            'type': channel_type,
-                            'username': channel,
-                            'participants': getattr(entity, 'participants_count', 'Unknown')
-                        }
+                                continue
                         
-                        logger.info(f"✅ Connected: {entity.title} (ID: {entity.id})")
-                        success_count += 1
-                    else:
-                        logger.error(f"❌ Failed to connect to: {channel}")
-                        logger.error(f"   Reason: No entity returned from connection attempt")
-                        
-                except Exception as e:
-                    logger.error(f"❌ Error connecting to {channel}: {e}")
-                    logger.error(f"   Error type: {type(e).__name__}")
+                        if entity:
+                            self.target_entities.append(entity)
+                            self.channel_info[entity.id] = {
+                                'name': getattr(entity, 'title', channel),
+                                'type': channel_type,
+                                'username': channel,
+                                'participants': getattr(entity, 'participants_count', 'Unknown')
+                            }
+                            
+                            logger.info(f"✅ Connected: {entity.title} (ID: {entity.id})")
+                            success_count += 1
+                        else:
+                            logger.error(f"❌ Failed to connect to: {channel}")
+                            logger.error(f"   Reason: No entity returned from connection attempt")
+                            
+                    except Exception as e:
+                        logger.error(f"❌ Error connecting to {channel}: {e}")
+                        logger.error(f"   Error type: {type(e).__name__}")
             
             # Set first entity as primary for backwards compatibility
             if self.target_entities:
                 self.target_entity = self.target_entities[0]
             
             logger.info("=" * 50)
-            logger.info(f"✅ Connected to {success_count}/{len(self.channel_list)} channels")
+            logger.info(f"✅ Connected to {success_count}/{len(self.channel_list) if not channel_ids else len(channel_ids)} channels")
             logger.info("=" * 50)
             
             return success_count > 0

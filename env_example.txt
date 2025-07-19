@@ -22,19 +22,39 @@ TELEGRAM_API_HASH=your_api_hash_here
 # Your phone number with country code (e.g., +1234567890)
 TELEGRAM_PHONE_NUMBER=your_phone_number_here
 
-# --- Private Channel Configuration ---
+# =============================================================================
+# MULTI-CHANNEL CONFIGURATION
+# =============================================================================
+# Choose ONE method below for connecting to channels
+
+# --- Method A: Direct Channel IDs (PREFERRED - avoids rate limiting) ---
+# Use this method if you're already a member of the channels
+# Get channel IDs by forwarding a message to @userinfobot
+# Comma-separated list of channel IDs (numeric only)
+TELEGRAM_CHANNEL_IDS=1234567890,9876543210
+# Optional: Channel names for logging/display (ID:Name format)
+TELEGRAM_CHANNEL_NAMES=1234567890:My Trading Channel,9876543210:Signal Test
+
+# --- Method B: Legacy Invite Links (may cause FloodWaitError) ---
+# Use only if Method A doesn't work or for new channels
+# Comma-separated invite links for private channels
+TELEGRAM_INVITE_LINKS=https://t.me/+your_invite_hash1,https://t.me/+your_invite_hash2
+# Channel mapping for already-joined channels (hash:id:name format)
+TELEGRAM_CHANNEL_MAPPINGS=your_hash1:1234567890:Channel Name 1,your_hash2:9876543210:Channel Name 2
+
+# --- Method C: Single Channel (backwards compatibility) ---
 # For private channels, use invite link instead of username
 TELEGRAM_CHANNEL_INVITE_LINK=https://t.me/+your_invite_hash
 # Channel username (without @) - only for public channels
 TELEGRAM_CHANNEL_USERNAME=your_public_channel
+# Leave empty when using multi-channel methods above
+TELEGRAM_CHANNELS=
+
 # Optional: Session string to avoid re-authentication
 TELEGRAM_SESSION_STRING=
 
-# =============================================================================
-# MT5 EA COMMUNICATION SETTINGS
-# =============================================================================
-# HTTP-based communication with MetaTrader 5 Expert Advisor
-
+# MT4 Configuration (HTTP Only)
+# Clean HTTP-based communication with MT4 EA
 MT4_COMMUNICATION_METHOD=http
 MT4_HTTP_HOST=localhost
 MT4_HTTP_PORT=8888
@@ -99,8 +119,19 @@ PROCESSED_SIGNALS_DIRECTORY=processed_signals
 # QUICK START GUIDE
 # =============================================================================
 # 1. Copy this file to .env in your project directory
-# 2. Configure Telegram settings (choose Bot API OR MTProto)
+# 2. Configure Telegram settings:
+#    - Choose Bot API OR MTProto method
+#    - For channels: Use Direct Channel IDs (Method A) if you're already a member
+#    - To get channel IDs: Forward any message from the channel to @userinfobot
 # 3. Set MT4_HTTP_PORT to match your EA configuration
 # 4. Adjust trading parameters as needed
 # 5. Optional: Add OpenAI API key for enhanced signal parsing
-# 6. Run: python main.py 
+# 6. Run: python main.py
+
+# =============================================================================
+# TROUBLESHOOTING
+# =============================================================================
+# ❌ FloodWaitError: Switch from TELEGRAM_INVITE_LINKS to TELEGRAM_CHANNEL_IDS
+# ❌ Channel not found: Ensure you're a member and using correct ID
+# ❌ Authentication issues: Delete .session files and restart
+# ✅ Get channel ID: Forward message to @userinfobot or @getidsbot 

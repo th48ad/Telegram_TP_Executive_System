@@ -35,6 +35,10 @@ class Config:
     TELEGRAM_INVITE_LINKS: str = ""  # Comma-separated invite links for private channels
     TELEGRAM_CHANNEL_MAPPINGS: str = ""  # Format: "hash:id:name,hash:id:name"
     
+    # Direct Channel ID Configuration (PREFERRED - avoids FloodWaitError)
+    TELEGRAM_CHANNEL_IDS: str = ""  # Comma-separated channel IDs: "2478531458,4872588698"
+    TELEGRAM_CHANNEL_NAMES: str = ""  # Optional channel names: "2478531458:TakeProfit EXCLUSIVE,4872588698:SignalTest"
+    
     TELEGRAM_SESSION_STRING: str = ""  # Optional: save session to avoid re-auth
     
     # MT4 Configuration (LEGACY - only used by test files)
@@ -89,6 +93,10 @@ class Config:
         self.TELEGRAM_CHANNELS = os.getenv('TELEGRAM_CHANNELS', self.TELEGRAM_CHANNELS)
         self.TELEGRAM_INVITE_LINKS = os.getenv('TELEGRAM_INVITE_LINKS', self.TELEGRAM_INVITE_LINKS)
         self.TELEGRAM_CHANNEL_MAPPINGS = os.getenv('TELEGRAM_CHANNEL_MAPPINGS', self.TELEGRAM_CHANNEL_MAPPINGS)
+        
+        # Direct channel ID support (PREFERRED)
+        self.TELEGRAM_CHANNEL_IDS = os.getenv('TELEGRAM_CHANNEL_IDS', self.TELEGRAM_CHANNEL_IDS)
+        self.TELEGRAM_CHANNEL_NAMES = os.getenv('TELEGRAM_CHANNEL_NAMES', self.TELEGRAM_CHANNEL_NAMES)
         
         self.TELEGRAM_SESSION_STRING = os.getenv('TELEGRAM_SESSION_STRING', self.TELEGRAM_SESSION_STRING)
         
@@ -194,15 +202,18 @@ class Config:
         print(json.dumps(self.to_dict(), indent=2))
     
     def get_channel_list(self) -> List[str]:
-        """Get list of channels to monitor"""
+        """Get list of channels to monitor - returns IDs as strings for backwards compatibility"""
         channels = []
         
-        # Multi-channel configuration (priority)
-        if self.TELEGRAM_CHANNELS:
+        # PRIORITY 1: Direct channel IDs (PREFERRED - avoids FloodWaitError)
+        if self.TELEGRAM_CHANNEL_IDS:
+            channels.extend([str(channel_id) for channel_id in self.get_channel_ids()])
+        # PRIORITY 2: Multi-channel configuration
+        elif self.TELEGRAM_CHANNELS:
             channels.extend([ch.strip() for ch in self.TELEGRAM_CHANNELS.split(',') if ch.strip()])
         elif self.TELEGRAM_INVITE_LINKS:
             channels.extend([link.strip() for link in self.TELEGRAM_INVITE_LINKS.split(',') if link.strip()])
-        # Fallback to single channel (backwards compatible)
+        # PRIORITY 3: Fallback to single channel (backwards compatible)
         elif self.TELEGRAM_CHANNEL_USERNAME:
             channels.append(self.TELEGRAM_CHANNEL_USERNAME)
         elif self.TELEGRAM_CHANNEL_INVITE_LINK:
@@ -233,6 +244,39 @@ class Config:
                         print(f"Warning: Invalid channel mapping format: {mapping}")
         
         return mappings
+    
+    def get_channel_ids(self) -> List[int]:
+        """Get list of channel IDs to monitor (PREFERRED METHOD)"""
+        channel_ids = []
+        
+        if self.TELEGRAM_CHANNEL_IDS:
+            for channel_id in self.TELEGRAM_CHANNEL_IDS.split(','):
+                channel_id = channel_id.strip()
+                if channel_id:
+                    try:
+                        channel_ids.append(int(channel_id))
+                    except ValueError:
+                        print(f"Warning: Invalid channel ID format: {channel_id}")
+        
+        return channel_ids
+    
+    def get_channel_names_mapping(self) -> dict:
+        """Get mapping of channel ID to name for display purposes"""
+        name_mapping = {}
+        
+        if self.TELEGRAM_CHANNEL_NAMES:
+            for mapping in self.TELEGRAM_CHANNEL_NAMES.split(','):
+                mapping = mapping.strip()
+                if ':' in mapping:
+                    try:
+                        parts = mapping.split(':', 1)  # Split only on first colon
+                        channel_id = int(parts[0].strip())
+                        channel_name = parts[1].strip()
+                        name_mapping[channel_id] = channel_name
+                    except (ValueError, IndexError):
+                        print(f"Warning: Invalid channel name mapping format: {mapping}")
+        
+        return name_mapping
 
 # Create a sample .env file for easy configuration
 ENV_TEMPLATE = """# Telegram Configuration
