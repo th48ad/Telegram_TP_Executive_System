@@ -9,7 +9,7 @@ import logging
 import time
 import uuid
 from datetime import datetime
-from telethon import TelegramClient, events
+from telethon import TelegramClient, events, functions
 from telethon.errors import UserAlreadyParticipantError, InviteHashExpiredError
 import requests
 import json
@@ -31,14 +31,19 @@ class SimpleTelegramListener:
         self.api_hash = config.TELEGRAM_API_HASH
         self.phone_number = config.TELEGRAM_PHONE_NUMBER
         
-        # Channel configuration
+        # Multi-channel configuration (NEW)
+        self.channel_list = config.get_channel_list()
+        self.target_entities = []  # List of channel entities
+        self.channel_info = {}     # Map entity_id -> channel_info
+        
+        # Backwards compatibility - single channel
         self.channel_username = getattr(config, 'TELEGRAM_CHANNEL_USERNAME', None)
         self.invite_link = getattr(config, 'TELEGRAM_CHANNEL_INVITE_LINK', None)
+        self.target_entity = None  # Keep for backwards compatibility
         
         # Initialize parser and client
         self.signal_parser = SimplifiedSignalParser()
         self.client = None
-        self.target_entity = None
         
         # Web server config
         self.web_server_url = f"http://localhost:{config.MT4_HTTP_PORT}"
@@ -89,7 +94,98 @@ class SimpleTelegramListener:
             return False
     
     async def _connect_to_channel(self):
-        """Connect to the target Telegram channel"""
+        """Connect to all configured channels (multi-channel support)"""
+        try:
+            if not self.channel_list:
+                # Fallback to single channel for backwards compatibility
+                if self.invite_link or self.channel_username:
+                    return await self._connect_single_channel()
+                else:
+                    logger.error("No channels configured for monitoring")
+                    return False
+            
+            # Multi-channel setup
+            logger.info("=" * 50)
+            logger.info("   MULTI-CHANNEL TELEGRAM CONNECTION")
+            logger.info("=" * 50)
+            logger.info(f"Channels to monitor: {len(self.channel_list)}")
+            
+            success_count = 0
+            for i, channel in enumerate(self.channel_list, 1):
+                logger.info(f"\n🔗 Connecting to channel {i}/{len(self.channel_list)}: {channel}")
+                
+                try:
+                    entity = None
+                    channel_type = ""
+                    
+                    # Handle invite links
+                    if channel.startswith('https://t.me/+'):
+                        hash_match = re.search(r't\.me/\+([a-zA-Z0-9_-]+)', channel)
+                        if hash_match:
+                            invite_hash = hash_match.group(1)
+                            try:
+                                from telethon.tl.functions.messages import ImportChatInviteRequest
+                                result = await self.client(ImportChatInviteRequest(invite_hash))
+                                entity = result.chats[0]
+                                channel_type = "PRIVATE (Joined via invite)"
+                            except UserAlreadyParticipantError:
+                                channel_type = "PRIVATE (Already member)"
+                                # Find the channel in dialogs by matching invite hash
+                                async for dialog in self.client.iter_dialogs():
+                                    if hasattr(dialog.entity, 'title') and not hasattr(dialog.entity, 'username'):
+                                        try:
+                                            from telethon.tl.functions.messages import ExportChatInviteRequest
+                                            export = await self.client(ExportChatInviteRequest(dialog.entity))
+                                            if hasattr(export, 'link') and invite_hash in export.link:
+                                                entity = dialog.entity
+                                                break
+                                        except:
+                                            continue
+                            except Exception as e:
+                                logger.warning(f"Failed to join via invite: {e}")
+                    
+                    # Handle public channels or usernames
+                    else:
+                        try:
+                            entity = await self.client.get_entity(channel)
+                            channel_type = "PUBLIC"
+                        except Exception as e:
+                            logger.error(f"Failed to get entity for {channel}: {e}")
+                            continue
+                    
+                    if entity:
+                        self.target_entities.append(entity)
+                        self.channel_info[entity.id] = {
+                            'name': getattr(entity, 'title', channel),
+                            'type': channel_type,
+                            'username': channel,
+                            'participants': getattr(entity, 'participants_count', 'Unknown')
+                        }
+                        
+                        logger.info(f"✅ Connected: {entity.title} (ID: {entity.id})")
+                        success_count += 1
+                    else:
+                        logger.error(f"❌ Failed to connect to: {channel}")
+                        
+                except Exception as e:
+                    logger.error(f"❌ Error connecting to {channel}: {e}")
+            
+            # Set first entity as primary for backwards compatibility
+            if self.target_entities:
+                self.target_entity = self.target_entities[0]
+            
+            logger.info("=" * 50)
+            logger.info(f"✅ Connected to {success_count}/{len(self.channel_list)} channels")
+            logger.info("=" * 50)
+            
+            return success_count > 0
+            
+        except Exception as e:
+            logger.error(f"Error in multi-channel connection: {e}")
+            return False
+
+    async def _connect_single_channel(self):
+        """Fallback method for single channel connection (backwards compatibility)"""
         try:
             # Try invite link first (for private channels)
             if self.invite_link:
@@ -103,105 +199,44 @@ class SimpleTelegramListener:
                         result = await self.client(ImportChatInviteRequest(invite_hash))
                         self.target_entity = result.chats[0]
                         
-                        # Log detailed channel info
                         logger.info("=" * 50)
-                        logger.info("   TELEGRAM CHANNEL CONNECTION")
+                        logger.info("   SINGLE CHANNEL CONNECTION (FALLBACK)")
                         logger.info("=" * 50)
                         logger.info(f"Channel Type: PRIVATE")
                         logger.info(f"Channel Name: {self.target_entity.title}")
                         logger.info(f"Channel ID: {self.target_entity.id}")
-                        logger.info(f"Invite Link: {self.invite_link}")
                         logger.info("=" * 50)
                         return True
                         
                     except UserAlreadyParticipantError:
-                        # Already a member, resolve the invite link to get the correct entity
-                        try:
-                            from telethon.tl.functions.messages import CheckChatInviteRequest
-                            invite_hash = hash_match.group(1)
-                            
-                            # Check the invite to get channel info
-                            invite_info = await self.client(CheckChatInviteRequest(invite_hash))
-                            
-                            # Get the actual channel entity by ID
-                            if hasattr(invite_info, 'chat'):
-                                channel_id = invite_info.chat.id
-                                self.target_entity = await self.client.get_entity(channel_id)
-                            else:
-                                # Fallback: find matching channel by comparing invite hashes
-                                dialogs = await self.client.get_dialogs()
-                                for dialog in dialogs:
-                                    if hasattr(dialog.entity, 'title') and not hasattr(dialog.entity, 'username'):
-                                        # Try to get invite link for this channel to compare
-                                        try:
-                                            from telethon.tl.functions.messages import ExportChatInviteRequest
-                                            export = await self.client(ExportChatInviteRequest(dialog.entity))
-                                            if hasattr(export, 'link') and invite_hash in export.link:
-                                                self.target_entity = dialog.entity
-                                                break
-                                        except:
-                                            continue
-                                
-                                if not hasattr(self, 'target_entity'):
-                                    # Final fallback: use first private channel (old behavior)
-                                    dialogs = await self.client.get_dialogs()
-                                    for dialog in dialogs:
-                                        if hasattr(dialog.entity, 'title') and not hasattr(dialog.entity, 'username'):
-                                            self.target_entity = dialog.entity
-                                            break
-                            
-                            # Log detailed channel info
-                            logger.info("=" * 50)
-                            logger.info("   TELEGRAM CHANNEL CONNECTION")
-                            logger.info("=" * 50)
-                            logger.info(f"Channel Type: PRIVATE (Already Member)")
-                            logger.info(f"Channel Name: {self.target_entity.title}")
-                            logger.info(f"Channel ID: {self.target_entity.id}")
-                            logger.info(f"Invite Link: {self.invite_link}")
-                            logger.info("=" * 50)
-                            return True
-                            
-                        except Exception as fallback_error:
-                            logger.warning(f"Could not resolve invite link properly: {fallback_error}")
-                            # Final fallback: use first private channel (old behavior)
-                            dialogs = await self.client.get_dialogs()
-                            for dialog in dialogs:
-                                if hasattr(dialog.entity, 'title') and not hasattr(dialog.entity, 'username'):
-                                    self.target_entity = dialog.entity
-                                    
-                                    # Log detailed channel info
-                                    logger.info("=" * 50)
-                                    logger.info("   TELEGRAM CHANNEL CONNECTION")
-                                    logger.info("=" * 50)
-                                    logger.info(f"Channel Type: PRIVATE (Already Member - Fallback)")
-                                    logger.info(f"Channel Name: {dialog.entity.title}")
-                                    logger.info(f"Channel ID: {dialog.entity.id}")
-                                    logger.info(f"Invite Link: {self.invite_link}")
-                                    logger.info("=" * 50)
-                                    return True
+                        # Find in dialogs
+                        async for dialog in self.client.iter_dialogs():
+                            if hasattr(dialog.entity, 'title') and not hasattr(dialog.entity, 'username'):
+                                self.target_entity = dialog.entity
+                                logger.info("=" * 50)
+                                logger.info("   SINGLE CHANNEL CONNECTION (FALLBACK)")
+                                logger.info("=" * 50)
+                                logger.info(f"Channel Type: PRIVATE (Already Member)")
+                                logger.info(f"Channel Name: {self.target_entity.title}")
+                                logger.info("=" * 50)
+                                return True
             
             # Try public channel
             if self.channel_username:
                 self.target_entity = await self.client.get_entity(self.channel_username)
-                
-                # Log detailed channel info
-                participants_count = getattr(self.target_entity, 'participants_count', 'Unknown')
                 logger.info("=" * 50)
-                logger.info("   TELEGRAM CHANNEL CONNECTION")
+                logger.info("   SINGLE CHANNEL CONNECTION (FALLBACK)")
                 logger.info("=" * 50)
                 logger.info(f"Channel Type: PUBLIC")
                 logger.info(f"Channel Name: {self.target_entity.title}")
-                logger.info(f"Channel ID: {self.target_entity.id}")
-                logger.info(f"Channel Username: @{self.channel_username}")
-                logger.info(f"Participants: {participants_count}")
                 logger.info("=" * 50)
                 return True
             
-            logger.error("No valid channel configuration found")
+            logger.error("No valid single channel configuration found")
             return False
             
         except Exception as e:
-            logger.error(f"Channel connection failed: {e}")
+            logger.error(f"Single channel connection failed: {e}")
             return False
     
     async def _process_message(self, event):
@@ -212,8 +247,15 @@ class SimpleTelegramListener:
             message_id = message.id
             channel_id = event.chat_id
             
-            # Log that we received a message
-            logger.info(f"📩 Message received (ID: {message_id})")
+            # Get channel info for logging (MULTI-CHANNEL ENHANCEMENT)
+            channel_name = "Unknown Channel"
+            if hasattr(event, 'chat') and event.chat:
+                channel_name = getattr(event.chat, 'title', str(channel_id))
+            elif channel_id in self.channel_info:
+                channel_name = self.channel_info[channel_id]['name']
+            
+            # Log that we received a message with channel source
+            logger.info(f"📩 Message received from {channel_name} (ID: {message_id})")
             
             # Skip empty messages
             if not text.strip():
@@ -375,23 +417,36 @@ class SimpleTelegramListener:
             
             logger.info(f"Web server is healthy at {self.web_server_url}")
             
-            # Set up message handler
-            @self.client.on(events.NewMessage(chats=self.target_entity))
-            async def message_handler(event):
-                await self._process_message(event)
+            # Set up message handler for ALL channels
+            if self.target_entities:
+                @self.client.on(events.NewMessage(chats=self.target_entities))
+                async def message_handler(event):
+                    await self._process_message(event)
+            else:
+                # Fallback to single channel
+                @self.client.on(events.NewMessage(chats=self.target_entity))
+                async def message_handler(event):
+                    await self._process_message(event)
             
             # Display startup information
             logger.info("=" * 60)
-            logger.info("   SIMPLE TELEGRAM SIGNAL LISTENER - ACTIVE")
+            logger.info("   MULTI-CHANNEL TELEGRAM SIGNAL LISTENER - ACTIVE")
             logger.info("=" * 60)
-            logger.info(f"📡 Monitoring Channel: {getattr(self.target_entity, 'title', 'Unknown')}")
+            
+            if self.target_entities:
+                logger.info(f"📡 Monitoring {len(self.target_entities)} Channels:")
+                for entity in self.target_entities:
+                    channel_info = self.channel_info.get(entity.id, {})
+                    logger.info(f"  • {entity.title} ({channel_info.get('type', 'Unknown')})")
+            else:
+                logger.info(f"📡 Monitoring Channel: {getattr(self.target_entity, 'title', 'Unknown')}")
+            
             logger.info(f"🎯 Signal Types: LIMIT ORDERS ONLY")
             logger.info(f"❌ Ignoring: Market orders, replies, close instructions")
             logger.info(f"🤖 AI Validation: {'ENABLED' if self.signal_parser.openai_client else 'DISABLED'}")
             logger.info(f"🌐 Web Server: {self.web_server_url}")
-            logger.info(f"📊 Statistics: Every 5 minutes")
             logger.info("=" * 60)
-            logger.info("🚀 Ready to process new limit order signals...")
+            logger.info("🚀 Ready to process signals from all channels...")
             
             # Start statistics logging task
             asyncio.create_task(self._log_statistics())

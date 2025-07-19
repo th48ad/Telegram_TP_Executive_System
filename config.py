@@ -4,7 +4,7 @@ Manages all settings, credentials, and configuration options
 """
 
 import os
-from typing import Optional
+from typing import Optional, List
 from dataclasses import dataclass
 
 # Load environment variables from .env file
@@ -29,6 +29,11 @@ class Config:
     TELEGRAM_PHONE_NUMBER: str = ""
     TELEGRAM_CHANNEL_USERNAME: str = ""  # For private channels, leave empty and use invite link
     TELEGRAM_CHANNEL_INVITE_LINK: str = ""  # Private channel invite link: https://t.me/+hashcode
+    
+    # Multi-Channel Configuration (NEW FEATURE)
+    TELEGRAM_CHANNELS: str = ""  # Comma-separated: "SignalTest,TakeProfitEXECUTIVE"
+    TELEGRAM_INVITE_LINKS: str = ""  # Comma-separated invite links for private channels
+    
     TELEGRAM_SESSION_STRING: str = ""  # Optional: save session to avoid re-auth
     
     # MT4 Configuration (LEGACY - only used by test files)
@@ -78,6 +83,11 @@ class Config:
         self.TELEGRAM_PHONE_NUMBER = os.getenv('TELEGRAM_PHONE_NUMBER', self.TELEGRAM_PHONE_NUMBER)
         self.TELEGRAM_CHANNEL_USERNAME = os.getenv('TELEGRAM_CHANNEL_USERNAME', self.TELEGRAM_CHANNEL_USERNAME)
         self.TELEGRAM_CHANNEL_INVITE_LINK = os.getenv('TELEGRAM_CHANNEL_INVITE_LINK', self.TELEGRAM_CHANNEL_INVITE_LINK)
+        
+        # Multi-channel support (NEW)
+        self.TELEGRAM_CHANNELS = os.getenv('TELEGRAM_CHANNELS', self.TELEGRAM_CHANNELS)
+        self.TELEGRAM_INVITE_LINKS = os.getenv('TELEGRAM_INVITE_LINKS', self.TELEGRAM_INVITE_LINKS)
+        
         self.TELEGRAM_SESSION_STRING = os.getenv('TELEGRAM_SESSION_STRING', self.TELEGRAM_SESSION_STRING)
         
         # MT4 settings (HTTP only)
@@ -180,6 +190,23 @@ class Config:
         import json
         print("Current Configuration:")
         print(json.dumps(self.to_dict(), indent=2))
+    
+    def get_channel_list(self) -> List[str]:
+        """Get list of channels to monitor"""
+        channels = []
+        
+        # Multi-channel configuration (priority)
+        if self.TELEGRAM_CHANNELS:
+            channels.extend([ch.strip() for ch in self.TELEGRAM_CHANNELS.split(',') if ch.strip()])
+        elif self.TELEGRAM_INVITE_LINKS:
+            channels.extend([link.strip() for link in self.TELEGRAM_INVITE_LINKS.split(',') if link.strip()])
+        # Fallback to single channel (backwards compatible)
+        elif self.TELEGRAM_CHANNEL_USERNAME:
+            channels.append(self.TELEGRAM_CHANNEL_USERNAME)
+        elif self.TELEGRAM_CHANNEL_INVITE_LINK:
+            channels.append(self.TELEGRAM_CHANNEL_INVITE_LINK)
+            
+        return channels
 
 # Create a sample .env file for easy configuration
 ENV_TEMPLATE = """# Telegram Configuration
@@ -192,6 +219,11 @@ TELEGRAM_API_HASH=your_api_hash_here
 TELEGRAM_PHONE_NUMBER=your_phone_number_here
 TELEGRAM_CHANNEL_USERNAME=
 TELEGRAM_CHANNEL_INVITE_LINK=https://t.me/+your_invite_hash
+
+# Multi-Channel Configuration (NEW)
+TELEGRAM_CHANNELS=SignalTest,TakeProfitEXECUTIVE
+TELEGRAM_INVITE_LINKS=
+
 TELEGRAM_SESSION_STRING=
 
 # MT4 Configuration (LEGACY - only used by test files)
