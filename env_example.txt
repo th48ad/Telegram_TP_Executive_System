@@ -1,0 +1,106 @@
+# =============================================================================
+# TELEGRAM SIGNAL TRADING SYSTEM - ENVIRONMENT CONFIGURATION
+# =============================================================================
+# Copy this file to .env and configure with your actual values
+# Never commit your actual .env file to version control!
+
+# =============================================================================
+# TELEGRAM CONFIGURATION
+# =============================================================================
+# Choose ONE method: Bot API OR MTProto User Account
+
+# --- Method 1: Bot API (requires admin access to channel) ---
+# Get bot token from @BotFather on Telegram
+TELEGRAM_BOT_TOKEN=your_bot_token_here
+# Channel ID - can be @channelname or numeric ID (-1001234567890)  
+TELEGRAM_CHANNEL_ID=@your_channel_or_numeric_id
+
+# --- Method 2: MTProto User Account (recommended - no admin needed) ---
+# Get API credentials from https://my.telegram.org
+TELEGRAM_API_ID=your_api_id_here
+TELEGRAM_API_HASH=your_api_hash_here
+# Your phone number with country code (e.g., +1234567890)
+TELEGRAM_PHONE_NUMBER=your_phone_number_here
+
+# --- Private Channel Configuration ---
+# For private channels, use invite link instead of username
+TELEGRAM_CHANNEL_INVITE_LINK=https://t.me/+your_invite_hash
+# Channel username (without @) - only for public channels
+TELEGRAM_CHANNEL_USERNAME=your_public_channel
+# Optional: Session string to avoid re-authentication
+TELEGRAM_SESSION_STRING=
+
+# =============================================================================
+# MT5 EA COMMUNICATION SETTINGS
+# =============================================================================
+# HTTP-based communication with MetaTrader 5 Expert Advisor
+
+MT4_COMMUNICATION_METHOD=http
+MT4_HTTP_HOST=localhost
+MT4_HTTP_PORT=8888
+MT4_HTTP_TIMEOUT=5
+
+# =============================================================================
+# TRADING CONFIGURATION
+# =============================================================================
+# Risk management and trading parameters
+
+# Risk per trade as percentage of account balance
+DEFAULT_RISK_PERCENT=1.0
+# Default lot size for trades (0 = use risk percentage)
+DEFAULT_LOT_SIZE=0.1
+# Maximum number of concurrent open trades
+MAX_CONCURRENT_TRADES=5
+# Enable trade filtering based on risk management rules
+ENABLE_TRADE_FILTERS=true
+# Minimum risk-reward ratio to accept a signal
+MIN_RISK_REWARD_RATIO=1.0
+# Maximum spread in pips to allow trade execution
+MAX_SPREAD_PIPS=3.0
+
+# =============================================================================
+# MAGIC NUMBER CONFIGURATION
+# =============================================================================
+# Must match EA settings for signal identification
+
+BASE_MAGIC_NUMBER=77777
+MAGIC_INCREMENT=1000
+
+# =============================================================================
+# LOGGING CONFIGURATION
+# =============================================================================
+# Control logging verbosity and output
+
+# Log levels: DEBUG, INFO, WARNING, ERROR
+LOG_LEVEL=INFO
+# Log file name
+LOG_FILE=telegram_signals.log
+# Enable 5-minute statistics logging (DEBUG level)
+DEBUG_STATISTICS=false
+
+# =============================================================================
+# SIGNAL PROCESSING (OPTIONAL)
+# =============================================================================
+# OpenAI integration for enhanced signal parsing
+
+# Get your API key from https://platform.openai.com/api-keys
+# Leave empty to use regex-only parsing
+OPENAI_API_KEY=your_openai_api_key_here
+
+# =============================================================================
+# FILE COMMUNICATION (LEGACY - NOT USED IN CURRENT VERSION)
+# =============================================================================
+# Only relevant if using file-based communication method
+
+SIGNALS_DIRECTORY=signals
+PROCESSED_SIGNALS_DIRECTORY=processed_signals
+
+# =============================================================================
+# QUICK START GUIDE
+# =============================================================================
+# 1. Copy this file to .env in your project directory
+# 2. Configure Telegram settings (choose Bot API OR MTProto)
+# 3. Set MT4_HTTP_PORT to match your EA configuration
+# 4. Adjust trading parameters as needed
+# 5. Optional: Add OpenAI API key for enhanced signal parsing
+# 6. Run: python main.py 
