@@ -331,3 +331,5 @@ mcp-server/
 # Parquet files (data files)
 *.parquet
 git-personal-push.sh
+*.session
+env
