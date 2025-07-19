@@ -130,19 +130,37 @@ class SimpleTelegramListener:
                                 channel_type = "PRIVATE (Joined via invite)"
                             except UserAlreadyParticipantError:
                                 channel_type = "PRIVATE (Already member)"
-                                # Find the channel in dialogs by matching invite hash
-                                async for dialog in self.client.iter_dialogs():
-                                    if hasattr(dialog.entity, 'title') and not hasattr(dialog.entity, 'username'):
-                                        try:
-                                            from telethon.tl.functions.messages import ExportChatInviteRequest
-                                            export = await self.client(ExportChatInviteRequest(dialog.entity))
-                                            if hasattr(export, 'link') and invite_hash in export.link:
-                                                entity = dialog.entity
-                                                break
-                                        except:
-                                            continue
+                                # Find the channel in dialogs by known IDs or names
+                                logger.info(f"   Already member - looking for channel in dialogs...")
+                                
+                                # Get channel mappings from configuration
+                                known_channels = self.config.get_channel_mappings()
+                                
+                                if invite_hash in known_channels:
+                                    target_id = known_channels[invite_hash]['id']
+                                    target_name = known_channels[invite_hash]['name']
+                                    
+                                    async for dialog in self.client.iter_dialogs():
+                                        if dialog.entity.id == target_id:
+                                            entity = dialog.entity
+                                            logger.info(f"   ✅ Found channel by ID: {target_name}")
+                                            break
+                                else:
+                                    # Fallback: try invite link matching (original method)
+                                    async for dialog in self.client.iter_dialogs():
+                                        if hasattr(dialog.entity, 'title') and not hasattr(dialog.entity, 'username'):
+                                            try:
+                                                from telethon.tl.functions.messages import ExportChatInviteRequest
+                                                export = await self.client(ExportChatInviteRequest(dialog.entity))
+                                                if hasattr(export, 'link') and invite_hash in export.link:
+                                                    entity = dialog.entity
+                                                    break
+                                            except:
+                                                continue
                             except Exception as e:
-                                logger.warning(f"Failed to join via invite: {e}")
+                                logger.error(f"❌ Failed to join via invite: {e}")
+                                logger.error(f"   Invite hash: {invite_hash}")
+                                logger.error(f"   Error type: {type(e).__name__}")
                     
                     # Handle public channels or usernames
                     else:
@@ -150,7 +168,8 @@ class SimpleTelegramListener:
                             entity = await self.client.get_entity(channel)
                             channel_type = "PUBLIC"
                         except Exception as e:
-                            logger.error(f"Failed to get entity for {channel}: {e}")
+                            logger.error(f"❌ Failed to get entity for {channel}: {e}")
+                            logger.error(f"   Error type: {type(e).__name__}")
                             continue
                     
                     if entity:
@@ -166,9 +185,11 @@ class SimpleTelegramListener:
                         success_count += 1
                     else:
                         logger.error(f"❌ Failed to connect to: {channel}")
+                        logger.error(f"   Reason: No entity returned from connection attempt")
                         
                 except Exception as e:
                     logger.error(f"❌ Error connecting to {channel}: {e}")
+                    logger.error(f"   Error type: {type(e).__name__}")
             
             # Set first entity as primary for backwards compatibility
             if self.target_entities:

@@ -127,7 +127,7 @@ class WebServerTester:
                 print(f"  ❌ TP1-only signal failed: {response.status_code}")
         except Exception as e:
             print(f"  ❌ TP1-only signal error: {e}")
-        
+    
         # Test 3: Invalid signal
         invalid_signal = self.generate_test_signal(valid=False)
         try:
@@ -306,7 +306,7 @@ class WebServerTester:
             self.log_test("Stats Endpoint", False, f"Error: {e}")
             
         return False
-    
+
     def test_concurrent_access(self):
         """Test concurrent access to endpoints"""
         def health_check():
@@ -355,7 +355,7 @@ class WebServerTester:
                 test_func()
             except Exception as e:
                 self.log_test(test_name, False, f"Test crashed: {e}")
-        
+            
         # Final summary
         print("\n" + "=" * 70)
         print("TEST SUMMARY")

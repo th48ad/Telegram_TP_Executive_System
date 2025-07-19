@@ -33,6 +33,7 @@ class Config:
     # Multi-Channel Configuration (NEW FEATURE)
     TELEGRAM_CHANNELS: str = ""  # Comma-separated: "SignalTest,TakeProfitEXECUTIVE"
     TELEGRAM_INVITE_LINKS: str = ""  # Comma-separated invite links for private channels
+    TELEGRAM_CHANNEL_MAPPINGS: str = ""  # Format: "hash:id:name,hash:id:name"
     
     TELEGRAM_SESSION_STRING: str = ""  # Optional: save session to avoid re-auth
     
@@ -87,6 +88,7 @@ class Config:
         # Multi-channel support (NEW)
         self.TELEGRAM_CHANNELS = os.getenv('TELEGRAM_CHANNELS', self.TELEGRAM_CHANNELS)
         self.TELEGRAM_INVITE_LINKS = os.getenv('TELEGRAM_INVITE_LINKS', self.TELEGRAM_INVITE_LINKS)
+        self.TELEGRAM_CHANNEL_MAPPINGS = os.getenv('TELEGRAM_CHANNEL_MAPPINGS', self.TELEGRAM_CHANNEL_MAPPINGS)
         
         self.TELEGRAM_SESSION_STRING = os.getenv('TELEGRAM_SESSION_STRING', self.TELEGRAM_SESSION_STRING)
         
@@ -207,6 +209,30 @@ class Config:
             channels.append(self.TELEGRAM_CHANNEL_INVITE_LINK)
             
         return channels
+    
+    def get_channel_mappings(self) -> dict:
+        """Parse channel mappings from configuration"""
+        mappings = {}
+        
+        if self.TELEGRAM_CHANNEL_MAPPINGS:
+            for mapping in self.TELEGRAM_CHANNEL_MAPPINGS.split(','):
+                mapping = mapping.strip()
+                if ':' in mapping:
+                    try:
+                        parts = mapping.split(':')
+                        if len(parts) >= 3:
+                            hash_code = parts[0].strip()
+                            channel_id = int(parts[1].strip())
+                            channel_name = ':'.join(parts[2:]).strip()  # Handle names with colons
+                            
+                            mappings[hash_code] = {
+                                'id': channel_id,
+                                'name': channel_name
+                            }
+                    except (ValueError, IndexError) as e:
+                        print(f"Warning: Invalid channel mapping format: {mapping}")
+        
+        return mappings
 
 # Create a sample .env file for easy configuration
 ENV_TEMPLATE = """# Telegram Configuration
@@ -223,6 +249,7 @@ TELEGRAM_CHANNEL_INVITE_LINK=https://t.me/+your_invite_hash
 # Multi-Channel Configuration (NEW)
 TELEGRAM_CHANNELS=SignalTest,TakeProfitEXECUTIVE
 TELEGRAM_INVITE_LINKS=
+TELEGRAM_CHANNEL_MAPPINGS=
 
 TELEGRAM_SESSION_STRING=
 
