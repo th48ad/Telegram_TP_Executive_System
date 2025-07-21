@@ -149,6 +149,13 @@ int OnInit()
                           StringFind(LiveTestSymbol, "XRP") >= 0 ||
                           StringFind(LiveTestSymbol, "LTC") >= 0 ||
                           StringFind(LiveTestSymbol, "ADA") >= 0));
+        
+        // Detect precious metals - don't add suffix
+        bool is_precious_metal = (StringFind(LiveTestSymbol, "XAU") >= 0 || 
+                                 StringFind(LiveTestSymbol, "XAG") >= 0 ||
+                                 StringFind(LiveTestSymbol, "GOLD") >= 0 ||
+                                 StringFind(LiveTestSymbol, "SILVER") >= 0);
+        
         if(!is_crypto)
         {
             display_symbol = LiveTestSymbol + SymbolSuffix;
@@ -508,14 +515,20 @@ void PlaceLimitOrder(int signal_index)
                       StringFind(base_symbol, "LTC") >= 0 ||
                       StringFind(base_symbol, "ADA") >= 0));
     
+    // Detect precious metals - don't add suffix
+    bool is_precious_metal = (StringFind(base_symbol, "XAU") >= 0 || 
+                             StringFind(base_symbol, "XAG") >= 0 ||
+                             StringFind(base_symbol, "GOLD") >= 0 ||
+                             StringFind(base_symbol, "SILVER") >= 0);
+    
     if(!LiveTestMode)
     {
-        // Only add suffix to non-crypto symbols
+        // Only add suffix to non-crypto symbols (forex and precious metals get suffix)
         if(!is_crypto)
         {
             trading_symbol = base_symbol + SymbolSuffix;
         }
-        // Crypto symbols like ETHUSD use base symbol as-is
+        // Only crypto symbols like ETHUSD use base symbol as-is
     }
     // LiveTestMode: symbol is already resolved (ETHUSD or EURUSD.PRO)
     
@@ -794,28 +807,41 @@ double CalculateLotSize(const SignalState &signal)
                           StringFind(signal.symbol, "LTC") >= 0 ||
                           StringFind(signal.symbol, "ADA") >= 0));
         
+        // Detect precious metals (Gold, Silver) - use point-based calculation like crypto
+        bool is_precious_metal = (StringFind(signal.symbol, "XAU") >= 0 || 
+                                 StringFind(signal.symbol, "XAG") >= 0 ||
+                                 StringFind(signal.symbol, "GOLD") >= 0 ||
+                                 StringFind(signal.symbol, "SILVER") >= 0);
+        
+        // Combine crypto and precious metals for point-based calculation
+        bool use_point_calculation = (is_crypto || is_precious_metal);
+        
         double sl_distance_units = 0.0;
         double point_value = 0.0;
         
-        if(is_crypto)
+        if(use_point_calculation)
         {
-            // CRYPTO LOGIC: Calculate distance in points directly
+            // POINT-BASED LOGIC: Calculate distance in points directly (Crypto + Precious Metals)
             sl_distance_units = MathAbs(signal.entry_price - signal.stop_loss);
             
-            // Get broker's tick value but validate it for crypto
+            // Get broker's tick value but validate it for point-based symbols
             double broker_tick_value = SymbolInfoDouble(signal.symbol, SYMBOL_TRADE_TICK_VALUE);
             
-            // For crypto symbols, broker often returns forex-like values (e.g. $0.01)
-            // which are incorrect for crypto contract sizes
-            if(broker_tick_value <= 0.1)  // If less than 10 cents, likely wrong for crypto
+            // For point-based symbols, broker often returns forex-like values (e.g. $0.01)
+            // which are incorrect for point-based contract sizes
+            if(broker_tick_value <= 0.1)  // If less than 10 cents, likely wrong for point-based symbols
             {
-                // Use proper crypto point values based on symbol
+                // Use proper point values based on symbol type
                 if(StringFind(signal.symbol, "ETH") >= 0)
                     point_value = 1.0;  // ETHUSD: $1 per point per lot
                 else if(StringFind(signal.symbol, "BTC") >= 0)
                     point_value = 10.0; // BTCUSD: $10 per point per lot (higher value)
+                else if(StringFind(signal.symbol, "XAU") >= 0 || StringFind(signal.symbol, "GOLD") >= 0)
+                    point_value = 100.0;  // XAUUSD: $100 per point per lot (Gold: 1 lot = 100 oz)
+                else if(StringFind(signal.symbol, "XAG") >= 0 || StringFind(signal.symbol, "SILVER") >= 0)
+                    point_value = 50.0;  // XAGUSD: $50 per point per lot (Silver: 1 lot = 5000 oz)
                 else
-                    point_value = 1.0;  // Default for other crypto
+                    point_value = 1.0;  // Default for other point-based symbols
             }
             else
             {
@@ -823,9 +849,10 @@ double CalculateLotSize(const SignalState &signal)
                 point_value = broker_tick_value;
             }
             
+            string symbol_type = is_crypto ? "CRYPTO" : "PRECIOUS_METAL";
             if(EnableDebugLogging)
             {
-                Print("[LOT_CALC] CRYPTO calculation for ", signal.symbol, ":");
+                Print("[LOT_CALC] ", symbol_type, " calculation for ", signal.symbol, ":");
                 Print("  Balance: $", DoubleToString(balance, 2));
                 Print("  Risk %: ", DoubleToString(RiskPercent, 2), "%");
                 Print("  Risk Amount: $", DoubleToString(risk_amount, 2));
@@ -1885,7 +1912,7 @@ void CreateLiveTestSignal()
         return;
     }
     
-    // Get current market data for test symbol (crypto symbols don't use suffix)
+    // Get current market data for test symbol (crypto and precious metals don't use suffix)
     string full_symbol = LiveTestSymbol;
     bool is_crypto = (StringFind(LiveTestSymbol, "USD") > 0 && 
                      (StringFind(LiveTestSymbol, "BTC") >= 0 || 
@@ -1894,9 +1921,15 @@ void CreateLiveTestSignal()
                       StringFind(LiveTestSymbol, "LTC") >= 0 ||
                       StringFind(LiveTestSymbol, "ADA") >= 0));
     
+    // Detect precious metals - don't add suffix
+    bool is_precious_metal = (StringFind(LiveTestSymbol, "XAU") >= 0 || 
+                             StringFind(LiveTestSymbol, "XAG") >= 0 ||
+                             StringFind(LiveTestSymbol, "GOLD") >= 0 ||
+                             StringFind(LiveTestSymbol, "SILVER") >= 0);
+    
     if(!is_crypto)
     {
-        full_symbol = LiveTestSymbol + SymbolSuffix; // Add suffix for forex pairs
+        full_symbol = LiveTestSymbol + SymbolSuffix; // Add suffix for non-crypto symbols (forex + precious metals)
     }
     
     if(!SymbolSelect(full_symbol, true))
