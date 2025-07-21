@@ -872,17 +872,61 @@ double CalculateLotSize(const SignalState &signal)
             int symbol_digits = (int)SymbolInfoInteger(signal.symbol, SYMBOL_DIGITS);
             if(symbol_digits <= 0) symbol_digits = 5; // Default
             
+            // DEBUG: Log broker's actual values for USDJPY to diagnose pip calculation
+            if(StringFind(signal.symbol, "JPY") >= 0)
+            {
+                Print("[DEBUG_JPY] Symbol: ", signal.symbol);
+                Print("[DEBUG_JPY] Broker SYMBOL_POINT: ", DoubleToString(symbol_point, 8));
+                Print("[DEBUG_JPY] Broker SYMBOL_DIGITS: ", symbol_digits);
+            }
+            
             // Calculate pip size (point value for pip calculation)
             double pip_size = symbol_point;
             if(symbol_digits == 5 || symbol_digits == 3) 
                 pip_size = symbol_point * 10; // Adjust for 5-digit/3-digit quotes
+            
+            // Special handling for JPY pairs to fix broker inconsistencies
+            if(StringFind(signal.symbol, "JPY") >= 0)
+            {
+                // JPY pairs should have pip_size = 0.01 regardless of broker's digit count
+                pip_size = 0.01;
+                Print("[DEBUG_JPY] Forced pip_size to 0.01 for JPY pair");
+            }
+            
+            if(EnableDebugLogging && StringFind(signal.symbol, "JPY") >= 0)
+            {
+                Print("[DEBUG_JPY] Calculated pip_size: ", DoubleToString(pip_size, 8));
+                Print("[DEBUG_JPY] Raw distance: ", DoubleToString(MathAbs(signal.entry_price - signal.stop_loss), 8));
+            }
             
             // Calculate stop loss distance in pips
             sl_distance_units = MathAbs(signal.entry_price - signal.stop_loss) / pip_size;
             
             // Get pip value (how much 1 pip costs for 1 lot)
             point_value = SymbolInfoDouble(signal.symbol, SYMBOL_TRADE_TICK_VALUE);
-            if(point_value <= 0) 
+            
+            // Special calculation for JPY pairs due to broker inconsistencies
+            if(StringFind(signal.symbol, "JPY") >= 0)
+            {
+                // Manual pip value calculation for JPY pairs
+                // Formula: (Pip Size × Contract Size) / Current Rate
+                double current_rate = (signal.entry_price + signal.stop_loss) / 2.0; // Use average of entry and SL
+                double contract_size = 100000.0; // Standard lot size
+                double jpy_pip_size = 0.01; // 1 pip for JPY pairs
+                
+                point_value = (jpy_pip_size * contract_size) / current_rate;
+                
+                if(EnableDebugLogging)
+                {
+                    Print("[DEBUG_JPY] Broker pip value: $", DoubleToString(SymbolInfoDouble(signal.symbol, SYMBOL_TRADE_TICK_VALUE), 4));
+                    Print("[DEBUG_JPY] Manual calculation:");
+                    Print("[DEBUG_JPY]   Current rate: ", DoubleToString(current_rate, 5));
+                    Print("[DEBUG_JPY]   Contract size: ", DoubleToString(contract_size, 0));
+                    Print("[DEBUG_JPY]   JPY pip size: ", DoubleToString(jpy_pip_size, 3));
+                    Print("[DEBUG_JPY]   Calculated pip value: $", DoubleToString(point_value, 4), " per pip per lot");
+                }
+            }
+            else if(point_value <= 0) 
             {
                 // Fallback calculation for major pairs
                 if(StringFind(signal.symbol, "USD") >= 0)
@@ -1217,6 +1261,8 @@ void CheckSignalTPs(int signal_index)
         // No position found - check if order is still pending
         if(!HasPendingOrder(active_signals[signal_index].message_id))
         {
+            // Neither position nor pending order exists
+            
             // Position might have been closed - check if this is a new close event
             if(active_signals[signal_index].position_ticket > 0)
             {
@@ -1224,10 +1270,21 @@ void CheckSignalTPs(int signal_index)
                 CheckPositionCloseReason(signal_index);
                 return;
             }
-            
-                if(EnableDebugLogging)
-                Print("[DEBUG] No position found for signal ", active_signals[signal_index].message_id);
+            else
+            {
+                // Signal has no position and no pending order - it's orphaned
+                // This happens when orders/positions are manually deleted
+                Print("[ORPHAN_DETECTED] Signal ", active_signals[signal_index].message_id, 
+                      " has no position or pending order - marking as inactive for cleanup");
+                
+                // Report manual deletion to server
+                ReportEvent(active_signals[signal_index].signal_id, "manual_close", 
+                           "reason=manual_deletion,no_position_or_order_found", active_signals[signal_index].message_id);
+                
+                // Mark as inactive for cleanup
+                active_signals[signal_index].is_active = false;
                 return;
+            }
         }
         else
         {
@@ -1257,10 +1314,33 @@ void CheckSignalTPs(int signal_index)
     if(!position.SelectByTicket(ticket))
         return;
     
-    // Get current market price
+    // Get current market price with proper symbol initialization
+    string trading_symbol = active_signals[signal_index].symbol;
+    
+    // Ensure symbol is selected and rates are refreshed
+    if(!SymbolSelect(trading_symbol, true))
+    {
+        Print("[TP_ERROR] Cannot select symbol for TP monitoring: ", trading_symbol);
+        return;
+    }
+    
+    // Initialize symbol info and refresh rates
+    if(!symbol_info.Name(trading_symbol) || !symbol_info.RefreshRates())
+    {
+        Print("[TP_ERROR] Cannot refresh rates for TP monitoring: ", trading_symbol);
+        return;
+    }
+    
+    // Get current market price using refreshed symbol info
     double current_price = (active_signals[signal_index].action == "BUY") ? 
-                          SymbolInfoDouble(active_signals[signal_index].symbol, SYMBOL_BID) : 
-                          SymbolInfoDouble(active_signals[signal_index].symbol, SYMBOL_ASK);
+                          symbol_info.Bid() : symbol_info.Ask();
+    
+    // Validate price to prevent false TP triggers
+    if(current_price <= 0)
+    {
+        Print("[TP_ERROR] Invalid market price (", current_price, ") for ", trading_symbol, " - skipping TP check");
+        return;
+    }
     
     // Check TP levels based on action
     if(active_signals[signal_index].action == "BUY")
@@ -1273,6 +1353,7 @@ void CheckSignalTPs(int signal_index)
             Print("[TP3_EXECUTION] Target: ", DoubleToString(active_signals[signal_index].tp3, 5), 
                   " | Actual: ", DoubleToString(current_price, 5), 
                   " | Slippage: ", DoubleToString(current_price - active_signals[signal_index].tp3, 5), " points");
+            Print("[TP3_DEBUG] BUY condition check: ", current_price, " >= ", active_signals[signal_index].tp3, " = ", (current_price >= active_signals[signal_index].tp3));
             
             // Play sound for TP3 hit
             if(EnableSounds)
@@ -1405,6 +1486,7 @@ void CheckSignalTPs(int signal_index)
             Print("[TP3_EXECUTION] Target: ", DoubleToString(active_signals[signal_index].tp3, 5), 
                   " | Actual: ", DoubleToString(current_price, 5), 
                   " | Slippage: ", DoubleToString(active_signals[signal_index].tp3 - current_price, 5), " points (SELL)");
+            Print("[TP3_DEBUG] SELL condition check: ", current_price, " <= ", active_signals[signal_index].tp3, " = ", (current_price <= active_signals[signal_index].tp3));
             
             // Play sound for TP3 hit
             if(EnableSounds)
@@ -1635,46 +1717,76 @@ void RecoverExistingPositions()
     int recovered_orders = 0;
     
     // Check all current positions
+    Print("[RECOVERY] Checking ", PositionsTotal(), " total positions...");
     for(int i = 0; i < PositionsTotal(); i++)
     {
         if(position.SelectByIndex(i))
         {
             int magic = (int)position.Magic();
+            string symbol = position.Symbol();
+            double volume = position.Volume();
+            double profit = position.Profit();
             
-            // Skip positions not managed by us (magic = 0 or very high numbers)
-            if(magic <= 1000)
+            Print("[RECOVERY] Position ", i, " - Symbol: ", symbol, ", Magic: ", magic, 
+                  ", Volume: ", volume, ", Profit: ", profit);
+            
+            // Skip positions not managed by us (magic = 0 or very low numbers)
+            // Telegram message IDs are typically > 100, so accept magic numbers > 100
+            if(magic <= 100)
+            {
+                Print("[RECOVERY] Skipping position with magic ", magic, " (not managed by EA - too low)");
                 continue;
+            }
             
-            if(EnableDebugLogging)
-                Print("[RECOVERY] Found existing position - Magic: ", magic, ", Ticket: ", position.Ticket());
+            Print("[RECOVERY] Found EA-managed position - Magic: ", magic, ", Ticket: ", position.Ticket());
             
             // Try to recover signal data from server
             if(RecoverSignalFromServer(magic))
             {
                 recovered_positions++;
+                Print("[RECOVERY] Successfully recovered position with magic ", magic);
+            }
+            else
+            {
+                Print("[RECOVERY] Failed to recover position with magic ", magic);
             }
         }
     }
     
     // Check all pending orders
+    Print("[RECOVERY] Checking ", OrdersTotal(), " total pending orders...");
     for(int i = 0; i < OrdersTotal(); i++)
     {
         if(order.SelectByIndex(i))
         {
             int magic = (int)order.Magic();
+            string symbol = order.Symbol();
+            double volume = order.VolumeInitial();
+            double price = order.PriceOpen();
             
-            // Skip orders not managed by us (magic = 0 or very high numbers)
-            if(magic <= 1000)
+            Print("[RECOVERY] Order ", i, " - Symbol: ", symbol, ", Magic: ", magic, 
+                  ", Volume: ", volume, ", Price: ", price, ", Type: ", EnumToString((ENUM_ORDER_TYPE)order.Type()));
+            
+            // Skip orders not managed by us (magic = 0 or very low numbers)
+            // Telegram message IDs are typically > 100, so accept magic numbers > 100
+            if(magic <= 100)
+            {
+                Print("[RECOVERY] Skipping order with magic ", magic, " (not managed by EA - too low)");
                 continue;
+            }
             
-            if(EnableDebugLogging)
-                Print("[RECOVERY] Found existing pending order - Magic: ", magic, ", Ticket: ", order.Ticket(), 
-                      ", Symbol: ", order.Symbol(), ", Type: ", EnumToString((ENUM_ORDER_TYPE)order.Type()));
+            Print("[RECOVERY] Found EA-managed pending order - Magic: ", magic, ", Ticket: ", order.Ticket(), 
+                  ", Symbol: ", order.Symbol(), ", Type: ", EnumToString((ENUM_ORDER_TYPE)order.Type()));
             
             // Try to recover signal data from server
             if(RecoverSignalFromServer(magic))
             {
                 recovered_orders++;
+                Print("[RECOVERY] Successfully recovered order with magic ", magic);
+            }
+            else
+            {
+                Print("[RECOVERY] Failed to recover order with magic ", magic);
             }
         }
     }
@@ -1695,11 +1807,29 @@ bool RecoverSignalFromServer(int message_id)
     int timeout = 5000;
     string headers = "Content-Type: application/json\r\n";
     
-    Print("[RECOVERY] Attempting to recover signal for magic ", message_id, " from: ", url);
+    Print("[RECOVERY] =========================================");
+    Print("[RECOVERY] Attempting to recover signal for magic ", message_id);
+    Print("[RECOVERY] URL: ", url);
+    Print("[RECOVERY] Headers: ", headers);
+    Print("[RECOVERY] =========================================");
     
     int res = WebRequest("GET", url, headers, timeout, post_data, result, result_headers);
     
+    Print("[RECOVERY] =========================================");
     Print("[RECOVERY] HTTP response code: ", res, " for magic ", message_id);
+    Print("[RECOVERY] Response headers: ", result_headers);
+    
+    if(res == 200)
+    {
+        string response = CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8);
+        Print("[RECOVERY] Response body: ", response);
+    }
+    else
+    {
+        string error_response = CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8);
+        Print("[RECOVERY] Error response: ", error_response);
+    }
+    Print("[RECOVERY] =========================================");
     
     if(res != 200)
     {
@@ -1734,7 +1864,36 @@ bool RecoverSignalFromServer(int message_id)
     int index = signal_count;
     active_signals[index].signal_id = json["id"].ToStr();
     active_signals[index].message_id = message_id;
-    active_signals[index].symbol = json["symbol"].ToStr();
+    
+    // Apply suffix logic during recovery (same as PlaceLimitOrder function)
+    string base_symbol = json["symbol"].ToStr();
+    string trading_symbol = base_symbol;
+    
+    // Detect if this is a crypto symbol
+    bool is_crypto = (StringFind(base_symbol, "USD") > 0 && 
+                     (StringFind(base_symbol, "BTC") >= 0 || 
+                      StringFind(base_symbol, "ETH") >= 0 ||
+                      StringFind(base_symbol, "XRP") >= 0 ||
+                      StringFind(base_symbol, "LTC") >= 0 ||
+                      StringFind(base_symbol, "ADA") >= 0));
+    
+    // Detect precious metals - don't add suffix
+    bool is_precious_metal = (StringFind(base_symbol, "XAU") >= 0 || 
+                             StringFind(base_symbol, "XAG") >= 0 ||
+                             StringFind(base_symbol, "GOLD") >= 0 ||
+                             StringFind(base_symbol, "SILVER") >= 0);
+    
+    if(!LiveTestMode)
+    {
+        // Only add suffix to non-crypto symbols (forex and precious metals get suffix)
+        if(!is_crypto)
+        {
+            trading_symbol = base_symbol + SymbolSuffix;
+        }
+        // Only crypto symbols like ETHUSD use base symbol as-is
+    }
+    
+    active_signals[index].symbol = trading_symbol;  // Store the full trading symbol with suffix
     active_signals[index].action = json["action"].ToStr();
     active_signals[index].entry_price = json["entry_price"].ToDbl();
     active_signals[index].position_ticket = FindPositionByMagic(message_id);

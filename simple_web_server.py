@@ -86,6 +86,19 @@ class SimpleSignalServer:
     def _setup_routes(self):
         """Setup Flask routes"""
         
+        @self.app.before_request
+        def log_request_info():
+            """Log all incoming requests for debugging"""
+            if request.path != '/health':  # Skip health checks to avoid spam
+                logger.info(f"=== REQUEST DEBUG ===")
+                logger.info(f"Method: {request.method}")
+                logger.info(f"Path: {request.path}")
+                logger.info(f"Full URL: {request.url}")
+                logger.info(f"Headers: {dict(request.headers)}")
+                if request.method in ['POST', 'PUT'] and request.is_json:
+                    logger.info(f"JSON Data: {request.get_json()}")
+                logger.info(f"==================")
+        
         @self.app.route('/health', methods=['GET'])
         def health():
             """Health check endpoint"""
@@ -225,9 +238,15 @@ class SimpleSignalServer:
         @self.app.route('/get_signal_state/<int:message_id>', methods=['GET'])
         def get_signal_state(message_id):
             """Get signal state for EA recovery with current state calculation"""
+            logger.info(f"=== DEBUG: EA Recovery Request Received ===")
+            logger.info(f"Requested message_id: {message_id}")
+            logger.info(f"Request URL: {request.url}")
+            logger.info(f"Request method: {request.method}")
+            
             try:
                 with sqlite3.connect(self.db_path) as conn:
                     # Get signal details
+                    logger.info(f"Querying database for message_id: {message_id}")
                     cursor = conn.execute("""
                         SELECT id, symbol, action, entry_price, stop_loss, tp1, tp2, tp3, status
                         FROM signals 
@@ -235,7 +254,14 @@ class SimpleSignalServer:
                     """, (message_id,))
                     
                     row = cursor.fetchone()
+                    logger.info(f"Database query result: {row}")
+                    
                     if not row:
+                        logger.warning(f"No signal found for message_id: {message_id}")
+                        # Let's also check what signals DO exist in the database
+                        all_cursor = conn.execute("SELECT message_id, symbol, action, status FROM signals ORDER BY created_at DESC LIMIT 10")
+                        all_signals = all_cursor.fetchall()
+                        logger.info(f"Available signals in database: {all_signals}")
                         return jsonify({'error': 'Signal not found'}), 404
                     
                     # Store original values
@@ -317,6 +343,9 @@ class SimpleSignalServer:
                         'events': events
                     }
                     
+                    logger.info(f"=== DEBUG: Sending response to EA ===")
+                    logger.info(f"Signal found: {signal_data['symbol']} {signal_data['action']}")
+                    logger.info(f"Response data: {json.dumps(signal_data, indent=2)}")
                     logger.info(f"Returned CURRENT signal state for message_id {message_id}")
                     logger.info(f"Recovery state: TP1={tp1_hit}, TP2={tp2_hit}, TP3={tp3_hit}, Current SL={current_sl}")
                     return jsonify(signal_data)
