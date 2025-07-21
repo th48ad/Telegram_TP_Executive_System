@@ -21,9 +21,10 @@ logger = setup_windows_safe_logging(__name__, force_emoji_replacement=True)
 class SimpleSignalServer:
     """Simplified web server for EA communication"""
     
-    def __init__(self, db_path: str = "signals.db", port: int = 8888):
+    def __init__(self, db_path: str = "signals.db", port: int = 8888, debug_requests: bool = False):
         self.db_path = db_path
         self.port = port
+        self.debug_requests = debug_requests
         self.app = Flask(__name__)
         self.running = False
         
@@ -31,7 +32,7 @@ class SimpleSignalServer:
         self._init_database()
         self._setup_routes()
         
-        logger.info(f"SimpleSignalServer initialized - DB: {db_path}, Port: {port}")
+        logger.info(f"SimpleSignalServer initialized - DB: {db_path}, Port: {port}, Debug: {debug_requests}")
     
     def _init_database(self):
         """Initialize database with simplified schema"""
@@ -88,8 +89,8 @@ class SimpleSignalServer:
         
         @self.app.before_request
         def log_request_info():
-            """Log all incoming requests for debugging"""
-            if request.path != '/health':  # Skip health checks to avoid spam
+            """Log all incoming requests for debugging (when debug_requests is enabled)"""
+            if self.debug_requests and request.path != '/health':  # Skip health checks to avoid spam
                 logger.info(f"=== REQUEST DEBUG ===")
                 logger.info(f"Method: {request.method}")
                 logger.info(f"Path: {request.path}")
@@ -238,15 +239,17 @@ class SimpleSignalServer:
         @self.app.route('/get_signal_state/<int:message_id>', methods=['GET'])
         def get_signal_state(message_id):
             """Get signal state for EA recovery with current state calculation"""
-            logger.info(f"=== DEBUG: EA Recovery Request Received ===")
-            logger.info(f"Requested message_id: {message_id}")
-            logger.info(f"Request URL: {request.url}")
-            logger.info(f"Request method: {request.method}")
+            if self.debug_requests:
+                logger.info(f"=== DEBUG: EA Recovery Request Received ===")
+                logger.info(f"Requested message_id: {message_id}")
+                logger.info(f"Request URL: {request.url}")
+                logger.info(f"Request method: {request.method}")
             
             try:
                 with sqlite3.connect(self.db_path) as conn:
                     # Get signal details
-                    logger.info(f"Querying database for message_id: {message_id}")
+                    if self.debug_requests:
+                        logger.info(f"Querying database for message_id: {message_id}")
                     cursor = conn.execute("""
                         SELECT id, symbol, action, entry_price, stop_loss, tp1, tp2, tp3, status
                         FROM signals 
@@ -254,14 +257,16 @@ class SimpleSignalServer:
                     """, (message_id,))
                     
                     row = cursor.fetchone()
-                    logger.info(f"Database query result: {row}")
+                    if self.debug_requests:
+                        logger.info(f"Database query result: {row}")
                     
                     if not row:
                         logger.warning(f"No signal found for message_id: {message_id}")
-                        # Let's also check what signals DO exist in the database
-                        all_cursor = conn.execute("SELECT message_id, symbol, action, status FROM signals ORDER BY created_at DESC LIMIT 10")
-                        all_signals = all_cursor.fetchall()
-                        logger.info(f"Available signals in database: {all_signals}")
+                        if self.debug_requests:
+                            # Let's also check what signals DO exist in the database
+                            all_cursor = conn.execute("SELECT message_id, symbol, action, status FROM signals ORDER BY created_at DESC LIMIT 10")
+                            all_signals = all_cursor.fetchall()
+                            logger.info(f"Available signals in database: {all_signals}")
                         return jsonify({'error': 'Signal not found'}), 404
                     
                     # Store original values
@@ -343,9 +348,10 @@ class SimpleSignalServer:
                         'events': events
                     }
                     
-                    logger.info(f"=== DEBUG: Sending response to EA ===")
-                    logger.info(f"Signal found: {signal_data['symbol']} {signal_data['action']}")
-                    logger.info(f"Response data: {json.dumps(signal_data, indent=2)}")
+                    if self.debug_requests:
+                        logger.info(f"=== DEBUG: Sending response to EA ===")
+                        logger.info(f"Signal found: {signal_data['symbol']} {signal_data['action']}")
+                        logger.info(f"Response data: {json.dumps(signal_data, indent=2)}")
                     logger.info(f"Returned CURRENT signal state for message_id {message_id}")
                     logger.info(f"Recovery state: TP1={tp1_hit}, TP2={tp2_hit}, TP3={tp3_hit}, Current SL={current_sl}")
                     return jsonify(signal_data)
@@ -475,7 +481,29 @@ class SimpleSignalServer:
 
 def main():
     """Main entry point"""
-    server = SimpleSignalServer()
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Simple Telegram Signal Web Server')
+    parser.add_argument('--debug-requests', action='store_true', 
+                       help='Enable verbose request debugging (default: False)')
+    parser.add_argument('--port', type=int, default=8888,
+                       help='Server port (default: 8888)')
+    parser.add_argument('--db', type=str, default='signals.db',
+                       help='Database path (default: signals.db)')
+    
+    args = parser.parse_args()
+    
+    if args.debug_requests:
+        logger.info("🐛 Debug request logging ENABLED - verbose output will be shown")
+    else:
+        logger.info("🔇 Debug request logging DISABLED - quiet operation (use --debug-requests to enable)")
+    
+    server = SimpleSignalServer(
+        db_path=args.db, 
+        port=args.port, 
+        debug_requests=args.debug_requests
+    )
+    
     try:
         server.start()
     except KeyboardInterrupt:
