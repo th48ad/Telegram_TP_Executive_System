@@ -556,6 +556,10 @@ void PlaceLimitOrder(int signal_index)
     }
     // LiveTestMode: symbol is already resolved (ETHUSD or EURUSD.PRO)
     
+    // CRITICAL FIX: Update stored symbol in signal array for TP monitoring
+    // This ensures CheckSignalTPs uses the correct symbol with suffix
+    active_signals[signal_index].symbol = trading_symbol;
+    
     // Select symbol in Market Watch
     if(!SymbolSelect(trading_symbol, true))
     {
