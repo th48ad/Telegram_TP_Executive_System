@@ -17,6 +17,9 @@ input string    ProductionSection = "=== PRODUCTION PARAMETERS ==="; // Producti
 input string    EA_Comment = "Simple Signal EA v2.0";
 input bool      EnableTrading = true;               // Enable actual trading
 input bool      EnableDebugLogging = true;          // Enable debug logging
+input bool      EnableStatisticsLogging = false;    // Enable periodic statistics logging (every 5 min)
+input bool      EnableSmartOrderConversion = true;  // Convert invalid limit orders to market orders
+input int       MarketOrderDeviation = 20;       // Market order base deviation (points: Gold=5x, Crypto=3x, Forex=1x)
 input bool      EnableSounds = true;                // Enable sound alerts
 input double    DefaultLotSize = 0.01;              // Default lot size (0 = use risk %)
 input double    RiskPercent = 2.0;                  // Risk % per trade (when DefaultLotSize = 0)
@@ -121,6 +124,26 @@ int OnInit()
     Print("Poll Interval: ", PollIntervalSeconds, " seconds");
     Print("Trading: ", EnableTrading ? "ENABLED" : "DISABLED");
     Print("Debug Logging: ", EnableDebugLogging ? "ENABLED" : "DISABLED");
+    Print("Statistics Logging: ", EnableStatisticsLogging ? "ENABLED (every 5 min)" : "DISABLED");
+    Print("Smart Order Conversion: ", EnableSmartOrderConversion ? "ENABLED" : "DISABLED");
+    if(EnableSmartOrderConversion)
+    {
+        Print("📈 Smart Conversion: Invalid limit orders → Market orders (when price moved favorably)");
+        Print("📊 Market Order Deviation: ", MarketOrderDeviation, " base points (symbol-specific multipliers applied)");
+        Print("   🥇 Precious Metals (XAUUSD): ", MarketOrderDeviation * 5, " points (5x multiplier)");
+        Print("   💰 Crypto (ETHUSD): ", MarketOrderDeviation * 3, " points (3x multiplier)");
+        Print("   🏦 Forex/JPY: ", MarketOrderDeviation, " points (1x multiplier)");
+        
+        // Validate deviation parameter
+        if(MarketOrderDeviation < 5)
+        {
+            Print("⚠️  WARNING: MarketOrderDeviation (", MarketOrderDeviation, ") is very low - may cause order rejections");
+        }
+        else if(MarketOrderDeviation > 100)
+        {
+            Print("⚠️  WARNING: MarketOrderDeviation (", MarketOrderDeviation, ") is very high - may cause excessive slippage");
+        }
+    }
     Print("Sound Alerts: ", EnableSounds ? "ENABLED" : "DISABLED");
     Print("TP Monitoring: REAL-TIME (OnTick)");
     Print("Default Lot Size: ", DefaultLotSize, " (0 = use risk %)");
@@ -323,8 +346,8 @@ void OnTimer()
         // TP monitoring now handled by OnTick() for real-time response
     }
     
-    // Log statistics every 5 minutes (debug mode only)
-    if(EnableDebugLogging && current_time - last_log_time >= 300)
+    // Log statistics every 5 minutes (only if statistics logging enabled)
+    if(EnableStatisticsLogging && current_time - last_log_time >= 300)
     {
         LogStatistics();
         last_log_time = current_time;
@@ -493,7 +516,8 @@ void ProcessNewSignal(CJAVal &signal_json)
 }
 
 //+------------------------------------------------------------------+
-//| Place limit order for signal                                     |
+//| Place limit order for signal (with smart order conversion)      |
+//| Converts invalid limit orders to market orders when favorable   |
 //+------------------------------------------------------------------+
 void PlaceLimitOrder(int signal_index)
 {
@@ -642,15 +666,43 @@ void PlaceLimitOrder(int signal_index)
             // Validate BUY LIMIT: entry must be below current ask
             if(active_signals[signal_index].entry_price >= current_ask)
             {
-                Print("[ERROR] Invalid BUY LIMIT price - Entry: ", active_signals[signal_index].entry_price, 
-                      " >= Ask: ", current_ask);
-                ReportEvent(active_signals[signal_index].signal_id, "error", 
-                           "Invalid BUY LIMIT price", active_signals[signal_index].message_id);
-                
-                // Mark signal as inactive to prevent infinite checking
-                active_signals[signal_index].is_active = false;
-                Print("[CLEANUP] Signal ", active_signals[signal_index].message_id, " marked inactive due to price validation error");
-                return;
+                if(EnableSmartOrderConversion)
+                {
+                    // Smart conversion: Market moved favorably past entry - convert to MARKET order
+                    Print("[SMART_CONVERT] BUY LIMIT invalid (Entry: ", active_signals[signal_index].entry_price, 
+                          " >= Ask: ", current_ask, ") - Converting to MARKET BUY");
+                    Print("[SMART_CONVERT] Favorable movement detected: Market moved UP past entry level");
+                    
+                    // Calculate symbol-specific deviation
+                    int symbol_deviation = CalculateSymbolSpecificDeviation(active_signals[signal_index].symbol);
+                    
+                    // Convert to market order with proper MT5 parameters
+                    req.action = TRADE_ACTION_DEAL;     // Immediate execution
+                    req.type = ORDER_TYPE_BUY;          // Market buy
+                    req.price = current_ask;            // Use current ask price
+                    req.type_filling = ORDER_FILLING_FOK; // Fill or Kill for market orders
+                    req.type_time = 0;                  // Not needed for market orders
+                    req.expiration = 0;                 // Not needed for market orders
+                    req.deviation = symbol_deviation;   // Symbol-specific deviation
+                    
+                    // Update entry price in signal for TP calculations
+                    active_signals[signal_index].entry_price = current_ask;
+                    
+                    Print("[SMART_CONVERT] New order type: MARKET BUY @ ", current_ask, 
+                          " | Deviation: ", symbol_deviation, " points | Symbol: ", active_signals[signal_index].symbol, " | Fill: FOK");
+                }
+                else
+                {
+                    Print("[ERROR] Invalid BUY LIMIT price - Entry: ", active_signals[signal_index].entry_price, 
+                          " >= Ask: ", current_ask);
+                    ReportEvent(active_signals[signal_index].signal_id, "error", 
+                               "Invalid BUY LIMIT price", active_signals[signal_index].message_id);
+                    
+                    // Mark signal as inactive to prevent infinite checking
+                    active_signals[signal_index].is_active = false;
+                    Print("[CLEANUP] Signal ", active_signals[signal_index].message_id, " marked inactive due to price validation error");
+                    return;
+                }
             }
         }
     }
@@ -677,28 +729,67 @@ void PlaceLimitOrder(int signal_index)
             // Validate SELL LIMIT: entry must be above current bid
             if(active_signals[signal_index].entry_price <= current_bid)
             {
-                Print("[ERROR] Invalid SELL LIMIT price - Entry: ", active_signals[signal_index].entry_price, 
-                      " <= Bid: ", current_bid);
-                ReportEvent(active_signals[signal_index].signal_id, "error", 
-                           "Invalid SELL LIMIT price", active_signals[signal_index].message_id);
-                
-                // Mark signal as inactive to prevent infinite checking
-                active_signals[signal_index].is_active = false;
-                Print("[CLEANUP] Signal ", active_signals[signal_index].message_id, " marked inactive due to price validation error");
-                return;
+                if(EnableSmartOrderConversion)
+                {
+                    // Smart conversion: Market moved favorably past entry - convert to MARKET order
+                    Print("[SMART_CONVERT] SELL LIMIT invalid (Entry: ", active_signals[signal_index].entry_price, 
+                          " <= Bid: ", current_bid, ") - Converting to MARKET SELL");
+                    Print("[SMART_CONVERT] Favorable movement detected: Market moved DOWN past entry level");
+                    
+                    // Calculate symbol-specific deviation
+                    int symbol_deviation = CalculateSymbolSpecificDeviation(active_signals[signal_index].symbol);
+                    
+                    // Convert to market order with proper MT5 parameters
+                    req.action = TRADE_ACTION_DEAL;     // Immediate execution
+                    req.type = ORDER_TYPE_SELL;         // Market sell
+                    req.price = current_bid;            // Use current bid price
+                    req.type_filling = ORDER_FILLING_FOK; // Fill or Kill for market orders
+                    req.type_time = 0;                  // Not needed for market orders
+                    req.expiration = 0;                 // Not needed for market orders
+                    req.deviation = symbol_deviation;   // Symbol-specific deviation
+                    
+                    // Update entry price in signal for TP calculations
+                    active_signals[signal_index].entry_price = current_bid;
+                    
+                    Print("[SMART_CONVERT] New order type: MARKET SELL @ ", current_bid, 
+                          " | Deviation: ", symbol_deviation, " points | Symbol: ", active_signals[signal_index].symbol, " | Fill: FOK");
+                }
+                else
+                {
+                    Print("[ERROR] Invalid SELL LIMIT price - Entry: ", active_signals[signal_index].entry_price, 
+                          " <= Bid: ", current_bid);
+                    ReportEvent(active_signals[signal_index].signal_id, "error", 
+                               "Invalid SELL LIMIT price", active_signals[signal_index].message_id);
+                    
+                    // Mark signal as inactive to prevent infinite checking
+                    active_signals[signal_index].is_active = false;
+                    Print("[CLEANUP] Signal ", active_signals[signal_index].message_id, " marked inactive due to price validation error");
+                    return;
+                }
             }
         }
     }
     
-    // Set filling mode
-    req.type_filling = ORDER_FILLING_RETURN;
+    // Set filling mode (only for limit orders - market orders already have FOK set)
+    if(req.action == TRADE_ACTION_PENDING)
+    {
+        req.type_filling = ORDER_FILLING_RETURN;  // Good for limit orders
+    }
+    // Market orders already have ORDER_FILLING_FOK set during smart conversion
     
     // Place the order
     bool order_result = OrderSend(req, result);
     
     if(order_result)
     {
-        Print("[SUCCESS] Limit order placed: ", active_signals[signal_index].symbol, " ", active_signals[signal_index].action, 
+        // Determine order type for logging
+        string order_type_text = "";
+        if(req.action == TRADE_ACTION_DEAL)
+            order_type_text = "Market order executed";
+        else
+            order_type_text = "Limit order placed";
+            
+        Print("[SUCCESS] ", order_type_text, ": ", active_signals[signal_index].symbol, " ", active_signals[signal_index].action, 
               " @ ", active_signals[signal_index].entry_price, " (Lot: ", DoubleToString(lot_size, 2), 
               ", Magic: ", active_signals[signal_index].message_id, ", Ticket: ", result.order, ")");
         
@@ -708,11 +799,15 @@ void PlaceLimitOrder(int signal_index)
             PlaySound("news.wav");  // Default MT5 sound for order placement
         }
         
-        // Report to server
-        ReportEvent(active_signals[signal_index].signal_id, "order_placed", 
-                   "ticket=" + IntegerToString((int)result.order) + 
-                   ",entry=" + DoubleToString(active_signals[signal_index].entry_price, 5) +
-                   ",volume=" + DoubleToString(lot_size, 2), active_signals[signal_index].message_id);
+        // Report to server with conversion info
+        string event_data = "ticket=" + IntegerToString((int)result.order) + 
+                           ",entry=" + DoubleToString(active_signals[signal_index].entry_price, 5) +
+                           ",volume=" + DoubleToString(lot_size, 2);
+        
+        if(req.action == TRADE_ACTION_DEAL)
+            event_data += ",smart_converted=true";
+            
+        ReportEvent(active_signals[signal_index].signal_id, "order_placed", event_data, active_signals[signal_index].message_id);
     }
     else
     {
@@ -2007,7 +2102,7 @@ bool RecoverSignalFromServer(int message_id)
 }
 
 //+------------------------------------------------------------------+
-//| Log statistics                                                    |
+//| Log statistics (only when EnableStatisticsLogging = true)       |
 //+------------------------------------------------------------------+
 void LogStatistics()
 {
@@ -2796,4 +2891,64 @@ void SendTestSignalToWebServer(int signal_index)
             Print("[TEST_WEB] Response: ", response);
         }
     }
-} 
+}
+
+//+------------------------------------------------------------------+
+//| Calculate symbol-specific market order deviation                 |
+//+------------------------------------------------------------------+
+int CalculateSymbolSpecificDeviation(string symbol)
+{
+    // Detect symbol type for appropriate deviation
+    bool is_precious_metal = (StringFind(symbol, "XAU") >= 0 || 
+                             StringFind(symbol, "XAG") >= 0 ||
+                             StringFind(symbol, "GOLD") >= 0 ||
+                             StringFind(symbol, "SILVER") >= 0);
+    
+    bool is_jpy_pair = (StringFind(symbol, "JPY") >= 0);
+    
+    bool is_crypto = (StringFind(symbol, "USD") > 0 && 
+                     (StringFind(symbol, "BTC") >= 0 || 
+                      StringFind(symbol, "ETH") >= 0 ||
+                      StringFind(symbol, "XRP") >= 0 ||
+                      StringFind(symbol, "LTC") >= 0 ||
+                      StringFind(symbol, "ADA") >= 0));
+    
+    int symbol_deviation;
+    
+    if(is_precious_metal)
+    {
+        // Gold/Silver: Higher deviation due to wider spreads and volatility
+        symbol_deviation = MarketOrderDeviation * 5;  // 5x multiplier (e.g., 20 → 100 points)
+        if(EnableDebugLogging)
+            Print("[DEVIATION_CALC] Precious metal detected: Using ", symbol_deviation, " points (", 
+                  DoubleToString(symbol_deviation/100.0, 1), " units)");
+    }
+    else if(is_crypto)
+    {
+        // Crypto: Higher deviation due to volatility
+        symbol_deviation = MarketOrderDeviation * 3;  // 3x multiplier (e.g., 20 → 60 points)
+        if(EnableDebugLogging)
+            Print("[DEVIATION_CALC] Crypto detected: Using ", symbol_deviation, " points (", 
+                  DoubleToString(symbol_deviation/10.0, 1), " units)");
+    }
+    else if(is_jpy_pair)
+    {
+        // JPY pairs: Use default (20 points = 20 pips, which is generous)
+        symbol_deviation = MarketOrderDeviation;
+        if(EnableDebugLogging)
+            Print("[DEVIATION_CALC] JPY pair detected: Using ", symbol_deviation, " points (", 
+                  DoubleToString(symbol_deviation/100.0, 2), " yen)");
+    }
+    else
+    {
+        // Forex major pairs: Use default
+        symbol_deviation = MarketOrderDeviation;
+        if(EnableDebugLogging)
+            Print("[DEVIATION_CALC] Forex pair detected: Using ", symbol_deviation, " points (", 
+                  DoubleToString(symbol_deviation/10.0, 1), " pips)");
+    }
+    
+    return symbol_deviation;
+}
+
+//+------------------------------------------------------------------+

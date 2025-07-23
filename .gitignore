@@ -333,3 +333,6 @@ mcp-server/
 git-personal-push.sh
 *.session
 env
+
+# VS Code workspace settings (optional - remove if you want to share MQ5 linting settings)
+.vscode/settings.json
