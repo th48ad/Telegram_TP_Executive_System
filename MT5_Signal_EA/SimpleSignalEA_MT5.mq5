@@ -72,6 +72,11 @@ struct SignalState
     ulong position_ticket; // Current position ticket (0 if no position)
     datetime last_check;   // Last price check time
     bool is_active;        // Signal is active
+    
+    // Error tracking flags to prevent log spam (log each error only once per signal)
+    bool symbol_select_error_logged;   // SymbolSelect error already logged
+    bool symbol_refresh_error_logged;  // RefreshRates error already logged  
+    bool invalid_price_error_logged;   // Invalid price error already logged
 };
 
 //--- Test Framework Structures
@@ -239,6 +244,9 @@ int OnInit()
         active_signals[i].position_ticket = 0;
         active_signals[i].last_check = 0;
         active_signals[i].is_active = false;
+        active_signals[i].symbol_select_error_logged = false;
+        active_signals[i].symbol_refresh_error_logged = false;
+        active_signals[i].invalid_price_error_logged = false;
     }
     
     signal_count = 0;
@@ -498,6 +506,9 @@ void ProcessNewSignal(CJAVal &signal_json)
     active_signals[index].position_ticket = 0;
     active_signals[index].last_check = TimeCurrent();
     active_signals[index].is_active = true;
+    active_signals[index].symbol_select_error_logged = false;
+    active_signals[index].symbol_refresh_error_logged = false;
+    active_signals[index].invalid_price_error_logged = false;
     
     signal_count++;
     
@@ -1181,6 +1192,9 @@ void CleanupInactiveSignals()
         active_signals[i].position_ticket = 0;
         active_signals[i].last_check = 0;
         active_signals[i].is_active = false;
+        active_signals[i].symbol_select_error_logged = false;
+        active_signals[i].symbol_refresh_error_logged = false;
+        active_signals[i].invalid_price_error_logged = false;
     }
     
     if(cleaned_count > 0)
@@ -1419,14 +1433,24 @@ void CheckSignalTPs(int signal_index)
     // Ensure symbol is selected and rates are refreshed
     if(!SymbolSelect(trading_symbol, true))
     {
-        Print("[TP_ERROR] Cannot select symbol for TP monitoring: ", trading_symbol);
+        // Only log this error once per signal to prevent spam
+        if(!active_signals[signal_index].symbol_select_error_logged)
+        {
+            Print("[TP_ERROR] Cannot select symbol for TP monitoring: ", trading_symbol);
+            active_signals[signal_index].symbol_select_error_logged = true;
+        }
         return;
     }
     
     // Initialize symbol info and refresh rates
     if(!symbol_info.Name(trading_symbol) || !symbol_info.RefreshRates())
     {
-        Print("[TP_ERROR] Cannot refresh rates for TP monitoring: ", trading_symbol);
+        // Only log this error once per signal to prevent spam
+        if(!active_signals[signal_index].symbol_refresh_error_logged)
+        {
+            Print("[TP_ERROR] Cannot refresh rates for TP monitoring: ", trading_symbol);
+            active_signals[signal_index].symbol_refresh_error_logged = true;
+        }
         return;
     }
     
@@ -1437,7 +1461,12 @@ void CheckSignalTPs(int signal_index)
     // Validate price to prevent false TP triggers
     if(current_price <= 0)
     {
-        Print("[TP_ERROR] Invalid market price (", current_price, ") for ", trading_symbol, " - skipping TP check");
+        // Only log this error once per signal to prevent spam
+        if(!active_signals[signal_index].invalid_price_error_logged)
+        {
+            Print("[TP_ERROR] Invalid market price (", current_price, ") for ", trading_symbol, " - skipping TP check");
+            active_signals[signal_index].invalid_price_error_logged = true;
+        }
         return;
     }
     
@@ -2096,6 +2125,11 @@ bool RecoverSignalFromServer(int message_id)
               ", TP3: ", active_signals[index].tp3);
     }
     
+    // Initialize error tracking flags for recovered signals
+    active_signals[index].symbol_select_error_logged = false;
+    active_signals[index].symbol_refresh_error_logged = false;
+    active_signals[index].invalid_price_error_logged = false;
+    
     signal_count++;
     
     // Report EA restart
@@ -2311,6 +2345,9 @@ void CreateLiveTestSignal()
     active_signals[index].position_ticket = 0;
     active_signals[index].last_check = TimeCurrent();
     active_signals[index].is_active = true;
+    active_signals[index].symbol_select_error_logged = false;
+    active_signals[index].symbol_refresh_error_logged = false;
+    active_signals[index].invalid_price_error_logged = false;
     
     signal_count++;
     live_test_signal_count++;
@@ -2577,6 +2614,9 @@ void GenerateTestSignal()
     active_signals[index].position_ticket = 0;
     active_signals[index].last_check = TimeCurrent();
     active_signals[index].is_active = true;
+    active_signals[index].symbol_select_error_logged = false;
+    active_signals[index].symbol_refresh_error_logged = false;
+    active_signals[index].invalid_price_error_logged = false;
     
     signal_count++;
     
