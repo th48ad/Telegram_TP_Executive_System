@@ -695,7 +695,7 @@ void PlaceLimitOrder(int signal_index)
                     req.action = TRADE_ACTION_DEAL;     // Immediate execution
                     req.type = ORDER_TYPE_BUY;          // Market buy
                     req.price = current_ask;            // Use current ask price
-                    req.type_filling = ORDER_FILLING_FOK; // Fill or Kill for market orders
+                    req.type_filling = GetSymbolFillType(trading_symbol); // Symbol-specific fill type
                     req.type_time = 0;                  // Not needed for market orders
                     req.expiration = 0;                 // Not needed for market orders
                     req.deviation = symbol_deviation;   // Symbol-specific deviation
@@ -704,7 +704,8 @@ void PlaceLimitOrder(int signal_index)
                     active_signals[signal_index].entry_price = current_ask;
                     
                     Print("[SMART_CONVERT] New order type: MARKET BUY @ ", current_ask, 
-                          " | Deviation: ", symbol_deviation, " points | Symbol: ", active_signals[signal_index].symbol, " | Fill: FOK");
+                          " | Deviation: ", symbol_deviation, " points | Symbol: ", active_signals[signal_index].symbol, 
+                          " | Fill: ", EnumToString(req.type_filling));
                 }
                 else
                 {
@@ -758,7 +759,7 @@ void PlaceLimitOrder(int signal_index)
                     req.action = TRADE_ACTION_DEAL;     // Immediate execution
                     req.type = ORDER_TYPE_SELL;         // Market sell
                     req.price = current_bid;            // Use current bid price
-                    req.type_filling = ORDER_FILLING_FOK; // Fill or Kill for market orders
+                    req.type_filling = GetSymbolFillType(trading_symbol); // Symbol-specific fill type
                     req.type_time = 0;                  // Not needed for market orders
                     req.expiration = 0;                 // Not needed for market orders
                     req.deviation = symbol_deviation;   // Symbol-specific deviation
@@ -767,7 +768,8 @@ void PlaceLimitOrder(int signal_index)
                     active_signals[signal_index].entry_price = current_bid;
                     
                     Print("[SMART_CONVERT] New order type: MARKET SELL @ ", current_bid, 
-                          " | Deviation: ", symbol_deviation, " points | Symbol: ", active_signals[signal_index].symbol, " | Fill: FOK");
+                          " | Deviation: ", symbol_deviation, " points | Symbol: ", active_signals[signal_index].symbol, 
+                          " | Fill: ", EnumToString(req.type_filling));
                 }
                 else
                 {
