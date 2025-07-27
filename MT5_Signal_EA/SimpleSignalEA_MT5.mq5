@@ -788,7 +788,7 @@ void PlaceLimitOrder(int signal_index)
     // Set filling mode (only for limit orders - market orders already have FOK set)
     if(req.action == TRADE_ACTION_PENDING)
     {
-        req.type_filling = ORDER_FILLING_RETURN;  // Good for limit orders
+        req.type_filling = GetSymbolFillType(trading_symbol);  // Symbol-specific fill type
     }
     // Market orders already have ORDER_FILLING_FOK set during smart conversion
     
@@ -1468,6 +1468,24 @@ void CheckSignalTPs(int signal_index)
             active_signals[signal_index].invalid_price_error_logged = true;
         }
         return;
+    }
+    
+    // Validate that position is still profitable before checking TPs
+    // This prevents false TP triggers when position was actually closed at SL
+    double position_open_price = position.PriceOpen();
+    bool is_profitable = false;
+    
+    if(active_signals[signal_index].action == "BUY")
+        is_profitable = (current_price > position_open_price);
+    else
+        is_profitable = (current_price < position_open_price);
+    
+    if(!is_profitable)
+    {
+        if(EnableDebugLogging)
+            Print("[TP_VALIDATION] Position not profitable - skipping TP checks | Open: ", position_open_price, 
+                  " | Current: ", current_price, " | Action: ", active_signals[signal_index].action);
+        return;  // Don't check TPs if position is at loss
     }
     
     // Check TP levels based on action
@@ -2934,6 +2952,56 @@ void SendTestSignalToWebServer(int signal_index)
             string response = CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8);
             Print("[TEST_WEB] Response: ", response);
         }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Get symbol-specific fill type to prevent "Invalid fill" errors   |
+//+------------------------------------------------------------------+
+ENUM_ORDER_TYPE_FILLING GetSymbolFillType(string symbol)
+{
+    // Check broker's supported fill modes for this symbol
+    int fill_policy = (int)SymbolInfoInteger(symbol, SYMBOL_FILLING_MODE);
+    
+    // SYMBOL_FILLING_MODE returns flags:
+    // SYMBOL_FILL_FOK = 1    - Fill or Kill
+    // SYMBOL_FILL_IOC = 2    - Immediate or Cancel  
+    // SYMBOL_FILL_RETURN = 4 - Return (partial fills allowed)
+    
+    if(EnableDebugLogging)
+    {
+        Print("[FILL_TYPE] Symbol: ", symbol, " | Broker fill policy: ", fill_policy);
+        Print("[FILL_TYPE] Supported modes - FOK: ", ((fill_policy & 1) != 0), 
+              ", IOC: ", ((fill_policy & 2) != 0), 
+              ", RETURN: ", ((fill_policy & 4) != 0));
+    }
+    
+    // Prefer ORDER_FILLING_RETURN for limit orders (most compatible)
+    if((fill_policy & 4) != 0)  // SYMBOL_FILL_RETURN supported
+    {
+        if(EnableDebugLogging)
+            Print("[FILL_TYPE] Using ORDER_FILLING_RETURN for ", symbol);
+        return ORDER_FILLING_RETURN;
+    }
+    // Fallback to IOC if RETURN not supported
+    else if((fill_policy & 2) != 0)  // SYMBOL_FILL_IOC supported
+    {
+        if(EnableDebugLogging)
+            Print("[FILL_TYPE] Using ORDER_FILLING_IOC for ", symbol, " (RETURN not supported)");
+        return ORDER_FILLING_IOC;
+    }
+    // Last resort: FOK
+    else if((fill_policy & 1) != 0)  // SYMBOL_FILL_FOK supported
+    {
+        if(EnableDebugLogging)
+            Print("[FILL_TYPE] Using ORDER_FILLING_FOK for ", symbol, " (RETURN/IOC not supported)");
+        return ORDER_FILLING_FOK;
+    }
+    else
+    {
+        // No fill modes supported (should not happen)
+        Print("[FILL_ERROR] No fill modes supported for ", symbol, " - using default FOK");
+        return ORDER_FILLING_FOK;
     }
 }
 
