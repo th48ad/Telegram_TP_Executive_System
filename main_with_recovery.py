@@ -27,9 +27,15 @@ class EnhancedSignalSystem:
         self.telegram_listener = None
         self.running = False
         self.shutdown_event = None
-        self.max_restart_attempts = 10  # Maximum restart attempts
-        self.restart_delay = 60  # Seconds between restart attempts
+        # Network recovery configuration
+        self.max_restart_attempts = 999999  # Effectively unlimited attempts
+        self.restart_delay = 60  # Base seconds between restart attempts
         self.current_restart_count = 0
+        self.max_backoff_delay = 300  # Max 5 minutes between attempts
+        self.backoff_reset_interval = 3600  # Reset backoff every hour
+        self.last_backoff_reset = time.time()
+        self.consecutive_failures = 0
+        self.total_downtime = 0
         
         # Setup unified logging
         self._setup_logging()
@@ -52,6 +58,41 @@ class EnhancedSignalSystem:
             except:
                 pass
     
+    def _check_internet_connectivity(self):
+        """Check if internet connection is available"""
+        try:
+            import socket
+            # Try to connect to Google DNS (8.8.8.8) on port 53
+            socket.create_connection(("8.8.8.8", 53), timeout=5)
+            return True
+        except (socket.error, OSError):
+            try:
+                # Fallback: try Cloudflare DNS
+                socket.create_connection(("1.1.1.1", 53), timeout=5)
+                return True
+            except (socket.error, OSError):
+                return False
+    
+    def _calculate_smart_backoff(self):
+        """Calculate intelligent backoff delay with periodic resets"""
+        current_time = time.time()
+        
+        # Reset backoff every hour to avoid extremely long delays during extended outages
+        if current_time - self.last_backoff_reset > self.backoff_reset_interval:
+            self.logger.info(f"🔄 Resetting backoff delay after {self.backoff_reset_interval/60:.0f} minutes")
+            self.consecutive_failures = 0
+            self.last_backoff_reset = current_time
+        
+        # Smart exponential backoff with reset
+        if self.consecutive_failures < 5:
+            # Quick attempts for short outages (1-2 minutes)
+            delay = min(30 * (2 ** self.consecutive_failures), 120)  # 30s, 60s, 120s, 120s, 120s
+        else:
+            # Longer delays for extended outages (5 minutes max)
+            delay = self.max_backoff_delay
+        
+        return delay
+    
     def _start_web_server(self):
         """Start web server in a separate thread"""
         try:
@@ -73,8 +114,14 @@ class EnhancedSignalSystem:
                 if await self.telegram_listener.initialize():
                     self.logger.info("✅ Telegram listener initialized successfully")
                     
-                    # Reset restart count on successful start
+                    # Reset all failure counters on successful start
                     self.current_restart_count = 0
+                    self.consecutive_failures = 0
+                    self.last_backoff_reset = time.time()
+                    
+                    if self.total_downtime > 0:
+                        self.logger.info(f"🎉 Telegram connection restored after {self.total_downtime/60:.1f} minutes of downtime")
+                        self.total_downtime = 0
                     
                     # Start listening - this will block until disconnected
                     await self.telegram_listener.start_listening()
@@ -94,32 +141,40 @@ class EnhancedSignalSystem:
                 
             except Exception as e:
                 self.current_restart_count += 1
+                self.consecutive_failures += 1
                 error_msg = str(e)
+                downtime_start = time.time()
                 
                 # Check for specific error types
                 if "TimeoutError" in error_msg or "WinError 121" in error_msg:
-                    self.logger.warning(f"🌐 Network connectivity issue detected: {error_msg}")
+                    self.logger.warning(f"🌐 Network timeout detected: {error_msg}")
                 elif "ConnectionError" in error_msg:
                     self.logger.warning(f"🔌 Connection error detected: {error_msg}")
                 else:
                     self.logger.error(f"❌ Telegram listener error: {error_msg}")
                     self.logger.debug(f"Full traceback: {traceback.format_exc()}")
                 
-                # Check if we should attempt restart
-                if self.current_restart_count >= self.max_restart_attempts:
-                    self.logger.error(f"🛑 Maximum restart attempts ({self.max_restart_attempts}) reached")
-                    self.logger.error(f"🛑 Giving up on automatic recovery - manual intervention required")
-                    self.running = False
-                    break
-                
                 if not self.running:
                     break
                 
-                # Calculate backoff delay (exponential backoff with max)
-                backoff_delay = min(self.restart_delay * (2 ** (self.current_restart_count - 1)), 300)  # Max 5 minutes
+                # Check internet connectivity before attempting Telegram reconnection
+                internet_available = self._check_internet_connectivity()
+                if not internet_available:
+                    self.logger.warning(f"🌍 No internet connectivity detected - will keep trying...")
                 
-                self.logger.warning(f"🔄 Attempt {self.current_restart_count}/{self.max_restart_attempts} failed")
-                self.logger.warning(f"⏱️ Waiting {backoff_delay} seconds before retry...")
+                # Calculate smart backoff delay
+                backoff_delay = self._calculate_smart_backoff()
+                
+                # Enhanced logging for long outages
+                if self.consecutive_failures <= 5:
+                    self.logger.warning(f"🔄 Reconnection attempt {self.current_restart_count} failed")
+                    self.logger.warning(f"⏱️ Waiting {backoff_delay} seconds before retry...")
+                elif self.consecutive_failures % 10 == 0:  # Log every 10th attempt during long outages
+                    total_downtime_min = self.total_downtime / 60
+                    self.logger.warning(f"🔄 Long outage: {self.consecutive_failures} failed attempts | "
+                                      f"Total downtime: {total_downtime_min:.1f} minutes | "
+                                      f"Internet: {'❌' if not internet_available else '✅'}")
+                    self.logger.warning(f"⏱️ Next attempt in {backoff_delay} seconds...")
                 
                 # Cleanup current listener
                 if self.telegram_listener:
@@ -138,7 +193,13 @@ class EnhancedSignalSystem:
                     # Timeout expired, continue with retry
                     pass
                 
-                self.logger.info(f"🔄 Attempting restart {self.current_restart_count + 1}/{self.max_restart_attempts}...")
+                # Track total downtime
+                self.total_downtime += backoff_delay
+                
+                # Simplified logging for restart attempts
+                if self.consecutive_failures <= 5:
+                    self.logger.info(f"🔄 Attempting restart {self.current_restart_count + 1}...")
+                # For long outages, we already logged in the failure section
     
     def _show_startup_banner(self):
         """Display startup banner"""
@@ -150,7 +211,7 @@ class EnhancedSignalSystem:
         self.logger.info(f"📱 Phone: {self.config.TELEGRAM_PHONE_NUMBER}")
         self.logger.info(f"📁 Database: signals.db")
         self.logger.info(f"📝 Logs: signal_system.log")
-        self.logger.info(f"🔄 Auto-Recovery: ENABLED (Max: {self.max_restart_attempts} attempts)")
+        self.logger.info(f"🔄 Auto-Recovery: UNLIMITED (Smart backoff + Internet monitoring)")
         self.logger.info("=" * 70)
     
     def _show_ready_banner(self):
@@ -163,7 +224,7 @@ class EnhancedSignalSystem:
         self.logger.info("🎯 Monitoring: LIMIT ORDERS ONLY")
         self.logger.info("❌ Ignoring: Market orders, replies, close instructions")
         self.logger.info("🤖 MT5 EA: Ready to connect")
-        self.logger.info("🛡️ Network Recovery: ENABLED")
+        self.logger.info("🛡️ Network Recovery: UNLIMITED (Auto-recovery for any duration outage)")
         self.logger.info("=" * 70)
         self.logger.info("💡 Tip: Attach SimpleSignalEA_MT5.mq5 to your MT5 chart")
         self.logger.info("🔍 Monitor: http://localhost:{}/stats".format(self.config.MT4_HTTP_PORT))
