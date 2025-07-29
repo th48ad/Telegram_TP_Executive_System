@@ -77,6 +77,7 @@ struct SignalState
     bool symbol_select_error_logged;   // SymbolSelect error already logged
     bool symbol_refresh_error_logged;  // RefreshRates error already logged  
     bool invalid_price_error_logged;   // Invalid price error already logged
+    bool tp_validation_logged;         // TP validation message already logged
 };
 
 //--- Test Framework Structures
@@ -247,6 +248,7 @@ int OnInit()
         active_signals[i].symbol_select_error_logged = false;
         active_signals[i].symbol_refresh_error_logged = false;
         active_signals[i].invalid_price_error_logged = false;
+        active_signals[i].tp_validation_logged = false;
     }
     
     signal_count = 0;
@@ -509,6 +511,7 @@ void ProcessNewSignal(CJAVal &signal_json)
     active_signals[index].symbol_select_error_logged = false;
     active_signals[index].symbol_refresh_error_logged = false;
     active_signals[index].invalid_price_error_logged = false;
+    active_signals[index].tp_validation_logged = false;
     
     signal_count++;
     
@@ -1197,6 +1200,7 @@ void CleanupInactiveSignals()
         active_signals[i].symbol_select_error_logged = false;
         active_signals[i].symbol_refresh_error_logged = false;
         active_signals[i].invalid_price_error_logged = false;
+        active_signals[i].tp_validation_logged = false;
     }
     
     if(cleaned_count > 0)
@@ -1484,10 +1488,20 @@ void CheckSignalTPs(int signal_index)
     
     if(!is_profitable)
     {
-        if(EnableDebugLogging)
+        // Only log this validation message once per signal to prevent spam
+        if(EnableDebugLogging && !active_signals[signal_index].tp_validation_logged)
+        {
             Print("[TP_VALIDATION] Position not profitable - skipping TP checks | Open: ", position_open_price, 
                   " | Current: ", current_price, " | Action: ", active_signals[signal_index].action);
+            active_signals[signal_index].tp_validation_logged = true;
+        }
         return;  // Don't check TPs if position is at loss
+    }
+    
+    // Reset TP validation flag when position becomes profitable again
+    if(active_signals[signal_index].tp_validation_logged)
+    {
+        active_signals[signal_index].tp_validation_logged = false;
     }
     
     // Check TP levels based on action
@@ -2149,6 +2163,7 @@ bool RecoverSignalFromServer(int message_id)
     active_signals[index].symbol_select_error_logged = false;
     active_signals[index].symbol_refresh_error_logged = false;
     active_signals[index].invalid_price_error_logged = false;
+    active_signals[index].tp_validation_logged = false;
     
     signal_count++;
     
@@ -2368,6 +2383,7 @@ void CreateLiveTestSignal()
     active_signals[index].symbol_select_error_logged = false;
     active_signals[index].symbol_refresh_error_logged = false;
     active_signals[index].invalid_price_error_logged = false;
+    active_signals[index].tp_validation_logged = false;
     
     signal_count++;
     live_test_signal_count++;
@@ -2637,6 +2653,7 @@ void GenerateTestSignal()
     active_signals[index].symbol_select_error_logged = false;
     active_signals[index].symbol_refresh_error_logged = false;
     active_signals[index].invalid_price_error_logged = false;
+    active_signals[index].tp_validation_logged = false;
     
     signal_count++;
     
