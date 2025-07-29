@@ -1043,11 +1043,42 @@ double CalculateLotSize(const SignalState &signal)
             }
             else if(point_value <= 0) 
             {
-                // Fallback calculation for major pairs
-                if(StringFind(signal.symbol, "USD") >= 0)
-                    point_value = 10.0; // $10 per pip for major USD pairs
+                // Smart fallback calculation for major pairs
+                // Check if USD is the QUOTE currency (XXXUSD format) vs BASE currency (USDXXX format)
+                bool usd_is_quote = (StringSubstr(signal.symbol, 3, 3) == "USD"); // EURUSD, GBPUSD, etc.
+                bool usd_is_base = (StringSubstr(signal.symbol, 0, 3) == "USD");   // USDCHF, USDCAD, etc.
+                
+                if(usd_is_quote)
+                {
+                    // USD quote currency pairs: 1 pip = $10 per standard lot
+                    point_value = 10.0;
+                    if(EnableDebugLogging)
+                        Print("[PIP_VALUE] USD quote pair detected: ", signal.symbol, " | Pip value: $10");
+                }
+                else if(usd_is_base)
+                {
+                    // USD base currency pairs: Calculate based on quote currency rate
+                    // For USDCHF: Pip value = (0.0001 × 100,000) / Current USDCHF rate
+                    double current_rate = (signal.entry_price + signal.stop_loss) / 2.0;
+                    double contract_size = 100000.0; // Standard lot
+                    double pip_size_decimal = 0.0001; // 1 pip for most pairs
+                    
+                    point_value = (pip_size_decimal * contract_size) / current_rate;
+                    
+                    if(EnableDebugLogging)
+                    {
+                        Print("[PIP_VALUE] USD base pair detected: ", signal.symbol);
+                        Print("[PIP_VALUE] Current rate: ", DoubleToString(current_rate, 5));
+                        Print("[PIP_VALUE] Calculated pip value: $", DoubleToString(point_value, 4), " per pip per lot");
+                    }
+                }
                 else
-                    point_value = 1.0; // Fallback
+                {
+                    // Non-USD pairs: Use broker's value or fallback
+                    point_value = 1.0; // Conservative fallback
+                    if(EnableDebugLogging)
+                        Print("[PIP_VALUE] Non-USD pair: ", signal.symbol, " | Using fallback: $1");
+                }
             }
             
             if(EnableDebugLogging)
