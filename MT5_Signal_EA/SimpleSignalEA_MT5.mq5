@@ -3162,6 +3162,25 @@ int CalculateSymbolSpecificDeviation(string symbol)
 //+------------------------------------------------------------------+
 
 //+------------------------------------------------------------------+
+//| Find chart ID for a specific symbol                             |
+//+------------------------------------------------------------------+
+long FindChartBySymbol(string symbol)
+{
+    // Start with the first chart
+    long chart_id = ChartFirst();
+    while(chart_id != -1)
+    {
+        string chart_symbol = ChartSymbol(chart_id);
+        if(chart_symbol == symbol)
+        {
+            return chart_id;
+        }
+        chart_id = ChartNext(chart_id);
+    }
+    return 0; // Return current chart if symbol not found
+}
+
+//+------------------------------------------------------------------+
 //| Create TP lines for a signal                                    |
 //+------------------------------------------------------------------+
 void CreateTPLines(int signal_index)
@@ -3178,6 +3197,15 @@ void CreateTPLines(int signal_index)
     string symbol = signal.symbol;
     int magic = signal.message_id;
     
+    // Find chart ID for this specific symbol
+    long chart_id = FindChartBySymbol(symbol);
+    if(chart_id == 0)
+    {
+        if(EnableDebugLogging)
+            Print("[CHART_LINES] No chart found for symbol ", symbol, " - lines will be created on current chart");
+        chart_id = 0; // Use current chart as fallback
+    }
+    
     // Create unique line names
     string tp1_name = StringFormat("TP1-%d", magic);
     string tp2_name = StringFormat("TP2-%d", magic);
@@ -3191,34 +3219,34 @@ void CreateTPLines(int signal_index)
     // Create TP1 line
     if(signal.tp1 > 0)
     {
-        ObjectCreate(0, tp1_name, OBJ_HLINE, 0, 0, signal.tp1);
-        ObjectSetInteger(0, tp1_name, OBJPROP_COLOR, tp1_color);
-        ObjectSetInteger(0, tp1_name, OBJPROP_STYLE, STYLE_DASH);
-        ObjectSetInteger(0, tp1_name, OBJPROP_WIDTH, 2);
-        ObjectSetString(0, tp1_name, OBJPROP_TEXT, StringFormat("TP1 (%.5f)", signal.tp1));
-        ObjectSetInteger(0, tp1_name, OBJPROP_BACK, false); // Foreground
+        ObjectCreate(chart_id, tp1_name, OBJ_HLINE, 0, 0, signal.tp1);
+        ObjectSetInteger(chart_id, tp1_name, OBJPROP_COLOR, tp1_color);
+        ObjectSetInteger(chart_id, tp1_name, OBJPROP_STYLE, STYLE_DASH);
+        ObjectSetInteger(chart_id, tp1_name, OBJPROP_WIDTH, 2);
+        ObjectSetString(chart_id, tp1_name, OBJPROP_TEXT, StringFormat("TP1 (%.5f)", signal.tp1));
+        ObjectSetInteger(chart_id, tp1_name, OBJPROP_BACK, false); // Foreground
     }
     
     // Create TP2 line
     if(signal.tp2 > 0)
     {
-        ObjectCreate(0, tp2_name, OBJ_HLINE, 0, 0, signal.tp2);
-        ObjectSetInteger(0, tp2_name, OBJPROP_COLOR, tp2_color);
-        ObjectSetInteger(0, tp2_name, OBJPROP_STYLE, STYLE_DASH);
-        ObjectSetInteger(0, tp2_name, OBJPROP_WIDTH, 2);
-        ObjectSetString(0, tp2_name, OBJPROP_TEXT, StringFormat("TP2 (%.5f)", signal.tp2));
-        ObjectSetInteger(0, tp2_name, OBJPROP_BACK, false); // Foreground
+        ObjectCreate(chart_id, tp2_name, OBJ_HLINE, 0, 0, signal.tp2);
+        ObjectSetInteger(chart_id, tp2_name, OBJPROP_COLOR, tp2_color);
+        ObjectSetInteger(chart_id, tp2_name, OBJPROP_STYLE, STYLE_DASH);
+        ObjectSetInteger(chart_id, tp2_name, OBJPROP_WIDTH, 2);
+        ObjectSetString(chart_id, tp2_name, OBJPROP_TEXT, StringFormat("TP2 (%.5f)", signal.tp2));
+        ObjectSetInteger(chart_id, tp2_name, OBJPROP_BACK, false); // Foreground
     }
     
     // Create TP3 line  
     if(signal.tp3 > 0)
     {
-        ObjectCreate(0, tp3_name, OBJ_HLINE, 0, 0, signal.tp3);
-        ObjectSetInteger(0, tp3_name, OBJPROP_COLOR, tp3_color);
-        ObjectSetInteger(0, tp3_name, OBJPROP_STYLE, STYLE_DASH);
-        ObjectSetInteger(0, tp3_name, OBJPROP_WIDTH, 2);
-        ObjectSetString(0, tp3_name, OBJPROP_TEXT, StringFormat("TP3 (%.5f)", signal.tp3));
-        ObjectSetInteger(0, tp3_name, OBJPROP_BACK, false); // Foreground
+        ObjectCreate(chart_id, tp3_name, OBJ_HLINE, 0, 0, signal.tp3);
+        ObjectSetInteger(chart_id, tp3_name, OBJPROP_COLOR, tp3_color);
+        ObjectSetInteger(chart_id, tp3_name, OBJPROP_STYLE, STYLE_DASH);
+        ObjectSetInteger(chart_id, tp3_name, OBJPROP_WIDTH, 2);
+        ObjectSetString(chart_id, tp3_name, OBJPROP_TEXT, StringFormat("TP3 (%.5f)", signal.tp3));
+        ObjectSetInteger(chart_id, tp3_name, OBJPROP_BACK, false); // Foreground
     }
     
     if(EnableDebugLogging)
@@ -3234,10 +3262,16 @@ void RemoveTPLines(int magic_number)
     string tp2_name = StringFormat("TP2-%d", magic_number);
     string tp3_name = StringFormat("TP3-%d", magic_number);
     
-    // Remove lines if they exist
-    if(ObjectFind(0, tp1_name) >= 0) ObjectDelete(0, tp1_name);
-    if(ObjectFind(0, tp2_name) >= 0) ObjectDelete(0, tp2_name);
-    if(ObjectFind(0, tp3_name) >= 0) ObjectDelete(0, tp3_name);
+    // Check all open charts and remove lines if they exist
+    long chart_id = ChartFirst();
+    while(chart_id != -1)
+    {
+        if(ObjectFind(chart_id, tp1_name) >= 0) ObjectDelete(chart_id, tp1_name);
+        if(ObjectFind(chart_id, tp2_name) >= 0) ObjectDelete(chart_id, tp2_name);
+        if(ObjectFind(chart_id, tp3_name) >= 0) ObjectDelete(chart_id, tp3_name);
+        
+        chart_id = ChartNext(chart_id);
+    }
     
     if(EnableDebugLogging)
         Print("[CHART_LINES] Removed TP lines for signal ", magic_number);
@@ -3252,10 +3286,19 @@ bool TPLinesExist(int magic_number)
     string tp2_name = StringFormat("TP2-%d", magic_number);
     string tp3_name = StringFormat("TP3-%d", magic_number);
     
-    // Return true if any TP line exists
-    return (ObjectFind(0, tp1_name) >= 0 || 
-            ObjectFind(0, tp2_name) >= 0 || 
-            ObjectFind(0, tp3_name) >= 0);
+    // Check all open charts for any TP line
+    long chart_id = ChartFirst();
+    while(chart_id != -1)
+    {
+        if(ObjectFind(chart_id, tp1_name) >= 0 || 
+           ObjectFind(chart_id, tp2_name) >= 0 || 
+           ObjectFind(chart_id, tp3_name) >= 0)
+        {
+            return true;
+        }
+        chart_id = ChartNext(chart_id);
+    }
+    return false;
 }
 
 //+------------------------------------------------------------------+
@@ -3273,28 +3316,35 @@ void UpdateTPLineColors(int signal_index)
     string tp2_name = StringFormat("TP2-%d", magic);
     string tp3_name = StringFormat("TP3-%d", magic);
     
-    // Update TP1 color
-    if(ObjectFind(0, tp1_name) >= 0)
+    // Check all open charts and update colors
+    long chart_id = ChartFirst();
+    while(chart_id != -1)
     {
-        color tp1_color = signal.tp1_hit ? clrGray : clrGreen;
-        ObjectSetInteger(0, tp1_name, OBJPROP_COLOR, tp1_color);
-        ObjectSetInteger(0, tp1_name, OBJPROP_STYLE, signal.tp1_hit ? STYLE_SOLID : STYLE_DASH);
-    }
-    
-    // Update TP2 color
-    if(ObjectFind(0, tp2_name) >= 0)
-    {
-        color tp2_color = signal.tp2_hit ? clrGray : clrYellow;
-        ObjectSetInteger(0, tp2_name, OBJPROP_COLOR, tp2_color);
-        ObjectSetInteger(0, tp2_name, OBJPROP_STYLE, signal.tp2_hit ? STYLE_SOLID : STYLE_DASH);
-    }
-    
-    // Update TP3 color
-    if(ObjectFind(0, tp3_name) >= 0)
-    {
-        color tp3_color = signal.tp3_hit ? clrGray : clrOrange;
-        ObjectSetInteger(0, tp3_name, OBJPROP_COLOR, tp3_color);
-        ObjectSetInteger(0, tp3_name, OBJPROP_STYLE, signal.tp3_hit ? STYLE_SOLID : STYLE_DASH);
+        // Update TP1 color
+        if(ObjectFind(chart_id, tp1_name) >= 0)
+        {
+            color tp1_color = signal.tp1_hit ? clrGray : clrGreen;
+            ObjectSetInteger(chart_id, tp1_name, OBJPROP_COLOR, tp1_color);
+            ObjectSetInteger(chart_id, tp1_name, OBJPROP_STYLE, signal.tp1_hit ? STYLE_SOLID : STYLE_DASH);
+        }
+        
+        // Update TP2 color
+        if(ObjectFind(chart_id, tp2_name) >= 0)
+        {
+            color tp2_color = signal.tp2_hit ? clrGray : clrYellow;
+            ObjectSetInteger(chart_id, tp2_name, OBJPROP_COLOR, tp2_color);
+            ObjectSetInteger(chart_id, tp2_name, OBJPROP_STYLE, signal.tp2_hit ? STYLE_SOLID : STYLE_DASH);
+        }
+        
+        // Update TP3 color
+        if(ObjectFind(chart_id, tp3_name) >= 0)
+        {
+            color tp3_color = signal.tp3_hit ? clrGray : clrOrange;
+            ObjectSetInteger(chart_id, tp3_name, OBJPROP_COLOR, tp3_color);
+            ObjectSetInteger(chart_id, tp3_name, OBJPROP_STYLE, signal.tp3_hit ? STYLE_SOLID : STYLE_DASH);
+        }
+        
+        chart_id = ChartNext(chart_id);
     }
 }
 
