@@ -2122,6 +2122,13 @@ bool RecoverSignalFromServer(int message_id)
     // Check if we have recovery state information (enhanced format)
     if(json["recovery_state"].type != jtUNDEF && json["recovery_state"].type != jtNULL)
     {
+        if(EnableDebugLogging)
+        {
+            Print("[RECOVERY] DEBUG: JSON TP values - tp1=", json["tp1"].type == jtNULL ? "NULL" : DoubleToString(json["tp1"].ToDbl(), 5),
+                  ", tp2=", json["tp2"].type == jtNULL ? "NULL" : DoubleToString(json["tp2"].ToDbl(), 5),
+                  ", tp3=", json["tp3"].type == jtNULL ? "NULL" : DoubleToString(json["tp3"].ToDbl(), 5));
+        }
+        
         // Use CURRENT state values (not original)
         active_signals[index].stop_loss = json["stop_loss"].ToDbl();  // Current SL after trailing
         active_signals[index].tp1 = (json["tp1"].type != jtNULL && json["tp1"].ToDbl() > 0) ? json["tp1"].ToDbl() : 0.0;
@@ -3224,13 +3231,29 @@ void CreateTPLines(int signal_index)
     SignalState signal = active_signals[signal_index];
     
     if(EnableDebugLogging)
-        Print("[CHART_LINES] DEBUG: Signal details - symbol='", signal.symbol, "', is_active=", signal.is_active, ", tp1=", signal.tp1);
+    {
+        Print("[CHART_LINES] DEBUG: Signal details - symbol='", signal.symbol, "', is_active=", signal.is_active);
+        Print("[CHART_LINES] DEBUG: TP values - tp1=", signal.tp1, ", tp2=", signal.tp2, ", tp3=", signal.tp3);
+        Print("[CHART_LINES] DEBUG: TP hit status - tp1_hit=", signal.tp1_hit, ", tp2_hit=", signal.tp2_hit, ", tp3_hit=", signal.tp3_hit);
+    }
     
-    // Only create lines for active signals with valid TP levels
-    if(!signal.is_active || signal.tp1 <= 0)
+    // Only create lines for active signals
+    if(!signal.is_active)
     {
         if(EnableDebugLogging)
-            Print("[CHART_LINES] DEBUG: Skipping TP lines - signal not active or no TP1");
+            Print("[CHART_LINES] DEBUG: Skipping TP lines - signal not active");
+        return;
+    }
+    
+    // Check if any pending TP levels exist (not hit and value > 0)
+    bool has_pending_tp = (!signal.tp1_hit && signal.tp1 > 0) || 
+                          (!signal.tp2_hit && signal.tp2 > 0) || 
+                          (!signal.tp3_hit && signal.tp3 > 0);
+    
+    if(!has_pending_tp)
+    {
+        if(EnableDebugLogging)
+            Print("[CHART_LINES] DEBUG: Skipping TP lines - no pending TP levels (all hit or zero)");
         return;
     }
     
@@ -3267,8 +3290,8 @@ void CreateTPLines(int signal_index)
     color tp2_color = clrYellow;     // Yellow for TP2  
     color tp3_color = clrOrange;     // Orange for TP3
     
-    // Create TP1 line
-    if(signal.tp1 > 0)
+    // Create TP1 line (only if NOT hit and valid price)
+    if(!signal.tp1_hit && signal.tp1 > 0)
     {
         bool tp1_created = ObjectCreate(chart_id, tp1_name, OBJ_HLINE, 0, 0, signal.tp1);
         if(EnableDebugLogging)
@@ -3287,9 +3310,13 @@ void CreateTPLines(int signal_index)
             Print("[CHART_LINES] DEBUG: TP1 ObjectFind(", chart_id, ", '", tp1_name, "') = ", obj_find);
         }
     }
+    else if(EnableDebugLogging)
+    {
+        Print("[CHART_LINES] DEBUG: Skipping TP1 line - hit=", signal.tp1_hit, ", value=", signal.tp1);
+    }
     
-    // Create TP2 line
-    if(signal.tp2 > 0)
+    // Create TP2 line (only if NOT hit and valid price)
+    if(!signal.tp2_hit && signal.tp2 > 0)
     {
         bool tp2_created = ObjectCreate(chart_id, tp2_name, OBJ_HLINE, 0, 0, signal.tp2);
         if(EnableDebugLogging)
@@ -3301,9 +3328,13 @@ void CreateTPLines(int signal_index)
         ObjectSetString(chart_id, tp2_name, OBJPROP_TEXT, StringFormat("TP2 (%.5f)", signal.tp2));
         ObjectSetInteger(chart_id, tp2_name, OBJPROP_BACK, false); // Foreground
     }
+    else if(EnableDebugLogging)
+    {
+        Print("[CHART_LINES] DEBUG: Skipping TP2 line - hit=", signal.tp2_hit, ", value=", signal.tp2);
+    }
     
-    // Create TP3 line  
-    if(signal.tp3 > 0)
+    // Create TP3 line (only if NOT hit and valid price)
+    if(!signal.tp3_hit && signal.tp3 > 0)
     {
         bool tp3_created = ObjectCreate(chart_id, tp3_name, OBJ_HLINE, 0, 0, signal.tp3);
         if(EnableDebugLogging)
@@ -3314,6 +3345,10 @@ void CreateTPLines(int signal_index)
         ObjectSetInteger(chart_id, tp3_name, OBJPROP_WIDTH, 2);
         ObjectSetString(chart_id, tp3_name, OBJPROP_TEXT, StringFormat("TP3 (%.5f)", signal.tp3));
         ObjectSetInteger(chart_id, tp3_name, OBJPROP_BACK, false); // Foreground
+    }
+    else if(EnableDebugLogging)
+    {
+        Print("[CHART_LINES] DEBUG: Skipping TP3 line - hit=", signal.tp3_hit, ", value=", signal.tp3);
     }
     
     if(EnableDebugLogging)
