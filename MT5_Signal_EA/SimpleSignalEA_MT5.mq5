@@ -3176,7 +3176,7 @@ void CreateTPLines(int signal_index)
         return;
     
     string symbol = signal.symbol;
-    int magic = signal.magic_number;
+    int magic = signal.message_id;
     
     // Create unique line names
     string tp1_name = StringFormat("TP1-%d", magic);
@@ -3267,7 +3267,7 @@ void UpdateTPLineColors(int signal_index)
         return;
         
     SignalState signal = active_signals[signal_index];
-    int magic = signal.magic_number;
+    int magic = signal.message_id;
     
     string tp1_name = StringFormat("TP1-%d", magic);
     string tp2_name = StringFormat("TP2-%d", magic);
