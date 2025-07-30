@@ -825,7 +825,12 @@ void PlaceLimitOrder(int signal_index)
                            ",volume=" + DoubleToString(lot_size, 2);
         
         if(req.action == TRADE_ACTION_DEAL)
+        {
             event_data += ",smart_converted=true";
+            
+            // Create chart TP lines for market orders (immediate execution)
+            CreateTPLines(signal_index);
+        }
             
         ReportEvent(active_signals[signal_index].signal_id, "order_placed", event_data, active_signals[signal_index].message_id);
     }
@@ -1387,6 +1392,9 @@ void AnalyzeCloseReason(int signal_index, double close_price, ENUM_DEAL_REASON d
         double pnl_points = (action == "BUY") ? (close_price - entry_price) : (entry_price - close_price);
         Print("[MANUAL_RESULT] P&L: ", DoubleToString(pnl_points, 2), " points");
         
+        // Remove chart TP lines when position is closed manually or by SL
+        RemoveTPLines(active_signals[signal_index].message_id);
+        
         ReportEvent(active_signals[signal_index].signal_id, "manual_close", 
                    "price=" + DoubleToString(close_price, 5) + 
                    ",pnl_points=" + DoubleToString(pnl_points, 2) +
@@ -1427,6 +1435,9 @@ void CheckSignalTPs(int signal_index)
                 Print("[ORPHAN_DETECTED] Signal ", active_signals[signal_index].message_id, 
                       " has no position or pending order - marking as inactive for cleanup");
                 
+                // Remove chart TP lines for orphaned signals
+                RemoveTPLines(active_signals[signal_index].message_id);
+                
                 // Report manual deletion to server
                 ReportEvent(active_signals[signal_index].signal_id, "manual_close", 
                            "reason=manual_deletion,no_position_or_order_found", active_signals[signal_index].message_id);
@@ -1458,6 +1469,9 @@ void CheckSignalTPs(int signal_index)
         
         ReportEvent(active_signals[signal_index].signal_id, "position_opened", 
                    "ticket=" + IntegerToString(ticket), active_signals[signal_index].message_id);
+        
+        // Create chart TP lines when position opens (limit order filled)
+        CreateTPLines(signal_index);
     }
     
     // Get current position info
@@ -1542,6 +1556,10 @@ void CheckSignalTPs(int signal_index)
         if(active_signals[signal_index].tp3 > 0 && !active_signals[signal_index].tp3_hit && current_price >= active_signals[signal_index].tp3)
         {
             active_signals[signal_index].tp3_hit = true;
+            
+            // Update chart line colors when TP3 is hit
+            UpdateTPLineColors(signal_index);
+            
             Print("[TP3_HIT] ", active_signals[signal_index].symbol, " - Closing full position");
             Print("[TP3_EXECUTION] Target: ", DoubleToString(active_signals[signal_index].tp3, 5), 
                   " | Actual: ", DoubleToString(current_price, 5), 
@@ -1570,6 +1588,10 @@ void CheckSignalTPs(int signal_index)
         if(active_signals[signal_index].tp2 > 0 && !active_signals[signal_index].tp2_hit && current_price >= active_signals[signal_index].tp2)
         {
             active_signals[signal_index].tp2_hit = true;
+            
+            // Update chart line colors when TP2 is hit
+            UpdateTPLineColors(signal_index);
+            
             Print("[TP2_HIT] ", active_signals[signal_index].symbol, " - Closing 50% and moving SL to TP1");
             Print("[TP2_EXECUTION] Target: ", DoubleToString(active_signals[signal_index].tp2, 5), 
                   " | Actual: ", DoubleToString(current_price, 5), 
@@ -1608,6 +1630,10 @@ void CheckSignalTPs(int signal_index)
         if(!active_signals[signal_index].tp1_hit && current_price >= active_signals[signal_index].tp1)
         {
             active_signals[signal_index].tp1_hit = true;
+            
+            // Update chart line colors when TP1 is hit
+            UpdateTPLineColors(signal_index);
+            
             Print("[TP1_EXECUTION] Target: ", DoubleToString(active_signals[signal_index].tp1, 5), 
                   " | Actual: ", DoubleToString(current_price, 5), 
                   " | Slippage: ", DoubleToString(current_price - active_signals[signal_index].tp1, 5), " points");
@@ -2201,6 +2227,24 @@ bool RecoverSignalFromServer(int message_id)
     // Report EA restart
     ReportEvent(active_signals[index].signal_id, "ea_started", 
                "recovered_signal=" + active_signals[index].symbol, active_signals[index].message_id);
+    
+    // Recover chart TP lines if position exists and lines don't already exist
+    ulong existing_position = FindPositionByMagic(message_id);
+    if(existing_position > 0 && !TPLinesExist(message_id))
+    {
+        CreateTPLines(index);
+        // Update line colors based on current TP hit status
+        UpdateTPLineColors(index);
+        if(EnableDebugLogging)
+            Print("[CHART_RECOVERY] Created TP lines for recovered signal ", message_id);
+    }
+    else if(TPLinesExist(message_id))
+    {
+        // Lines already exist, just update colors based on current status
+        UpdateTPLineColors(index);
+        if(EnableDebugLogging)
+            Print("[CHART_RECOVERY] Updated existing TP line colors for signal ", message_id);
+    }
     
     return true;
 }
@@ -3111,6 +3155,147 @@ int CalculateSymbolSpecificDeviation(string symbol)
     }
     
     return symbol_deviation;
+}
+
+//+------------------------------------------------------------------+
+//| Chart TP Line Management Functions                              |
+//+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+//| Create TP lines for a signal                                    |
+//+------------------------------------------------------------------+
+void CreateTPLines(int signal_index)
+{
+    if(signal_index < 0 || signal_index >= ArraySize(active_signals))
+        return;
+        
+    SignalState signal = active_signals[signal_index];
+    
+    // Only create lines for active signals with valid TP levels
+    if(!signal.is_active || signal.tp1 <= 0)
+        return;
+    
+    string symbol = signal.symbol;
+    int magic = signal.magic_number;
+    
+    // Create unique line names
+    string tp1_name = StringFormat("TP1-%d", magic);
+    string tp2_name = StringFormat("TP2-%d", magic);
+    string tp3_name = StringFormat("TP3-%d", magic);
+    
+    // Line colors
+    color tp1_color = clrGreen;      // Green for TP1
+    color tp2_color = clrYellow;     // Yellow for TP2  
+    color tp3_color = clrOrange;     // Orange for TP3
+    
+    // Create TP1 line
+    if(signal.tp1 > 0)
+    {
+        ObjectCreate(0, tp1_name, OBJ_HLINE, 0, 0, signal.tp1);
+        ObjectSetInteger(0, tp1_name, OBJPROP_COLOR, tp1_color);
+        ObjectSetInteger(0, tp1_name, OBJPROP_STYLE, STYLE_DASH);
+        ObjectSetInteger(0, tp1_name, OBJPROP_WIDTH, 2);
+        ObjectSetString(0, tp1_name, OBJPROP_TEXT, StringFormat("TP1 (%.5f)", signal.tp1));
+        ObjectSetInteger(0, tp1_name, OBJPROP_BACK, false); // Foreground
+    }
+    
+    // Create TP2 line
+    if(signal.tp2 > 0)
+    {
+        ObjectCreate(0, tp2_name, OBJ_HLINE, 0, 0, signal.tp2);
+        ObjectSetInteger(0, tp2_name, OBJPROP_COLOR, tp2_color);
+        ObjectSetInteger(0, tp2_name, OBJPROP_STYLE, STYLE_DASH);
+        ObjectSetInteger(0, tp2_name, OBJPROP_WIDTH, 2);
+        ObjectSetString(0, tp2_name, OBJPROP_TEXT, StringFormat("TP2 (%.5f)", signal.tp2));
+        ObjectSetInteger(0, tp2_name, OBJPROP_BACK, false); // Foreground
+    }
+    
+    // Create TP3 line  
+    if(signal.tp3 > 0)
+    {
+        ObjectCreate(0, tp3_name, OBJ_HLINE, 0, 0, signal.tp3);
+        ObjectSetInteger(0, tp3_name, OBJPROP_COLOR, tp3_color);
+        ObjectSetInteger(0, tp3_name, OBJPROP_STYLE, STYLE_DASH);
+        ObjectSetInteger(0, tp3_name, OBJPROP_WIDTH, 2);
+        ObjectSetString(0, tp3_name, OBJPROP_TEXT, StringFormat("TP3 (%.5f)", signal.tp3));
+        ObjectSetInteger(0, tp3_name, OBJPROP_BACK, false); // Foreground
+    }
+    
+    if(EnableDebugLogging)
+        Print("[CHART_LINES] Created TP lines for signal ", magic, " (", symbol, ")");
+}
+
+//+------------------------------------------------------------------+
+//| Remove TP lines for a signal                                    |
+//+------------------------------------------------------------------+
+void RemoveTPLines(int magic_number)
+{
+    string tp1_name = StringFormat("TP1-%d", magic_number);
+    string tp2_name = StringFormat("TP2-%d", magic_number);
+    string tp3_name = StringFormat("TP3-%d", magic_number);
+    
+    // Remove lines if they exist
+    if(ObjectFind(0, tp1_name) >= 0) ObjectDelete(0, tp1_name);
+    if(ObjectFind(0, tp2_name) >= 0) ObjectDelete(0, tp2_name);
+    if(ObjectFind(0, tp3_name) >= 0) ObjectDelete(0, tp3_name);
+    
+    if(EnableDebugLogging)
+        Print("[CHART_LINES] Removed TP lines for signal ", magic_number);
+}
+
+//+------------------------------------------------------------------+
+//| Check if TP lines exist for recovery                            |
+//+------------------------------------------------------------------+
+bool TPLinesExist(int magic_number)
+{
+    string tp1_name = StringFormat("TP1-%d", magic_number);
+    string tp2_name = StringFormat("TP2-%d", magic_number);
+    string tp3_name = StringFormat("TP3-%d", magic_number);
+    
+    // Return true if any TP line exists
+    return (ObjectFind(0, tp1_name) >= 0 || 
+            ObjectFind(0, tp2_name) >= 0 || 
+            ObjectFind(0, tp3_name) >= 0);
+}
+
+//+------------------------------------------------------------------+
+//| Update TP line colors based on hit status                       |
+//+------------------------------------------------------------------+
+void UpdateTPLineColors(int signal_index)
+{
+    if(signal_index < 0 || signal_index >= ArraySize(active_signals))
+        return;
+        
+    SignalState signal = active_signals[signal_index];
+    int magic = signal.magic_number;
+    
+    string tp1_name = StringFormat("TP1-%d", magic);
+    string tp2_name = StringFormat("TP2-%d", magic);
+    string tp3_name = StringFormat("TP3-%d", magic);
+    
+    // Update TP1 color
+    if(ObjectFind(0, tp1_name) >= 0)
+    {
+        color tp1_color = signal.tp1_hit ? clrGray : clrGreen;
+        ObjectSetInteger(0, tp1_name, OBJPROP_COLOR, tp1_color);
+        ObjectSetInteger(0, tp1_name, OBJPROP_STYLE, signal.tp1_hit ? STYLE_SOLID : STYLE_DASH);
+    }
+    
+    // Update TP2 color
+    if(ObjectFind(0, tp2_name) >= 0)
+    {
+        color tp2_color = signal.tp2_hit ? clrGray : clrYellow;
+        ObjectSetInteger(0, tp2_name, OBJPROP_COLOR, tp2_color);
+        ObjectSetInteger(0, tp2_name, OBJPROP_STYLE, signal.tp2_hit ? STYLE_SOLID : STYLE_DASH);
+    }
+    
+    // Update TP3 color
+    if(ObjectFind(0, tp3_name) >= 0)
+    {
+        color tp3_color = signal.tp3_hit ? clrGray : clrOrange;
+        ObjectSetInteger(0, tp3_name, OBJPROP_COLOR, tp3_color);
+        ObjectSetInteger(0, tp3_name, OBJPROP_STYLE, signal.tp3_hit ? STYLE_SOLID : STYLE_DASH);
+    }
 }
 
 //+------------------------------------------------------------------+
