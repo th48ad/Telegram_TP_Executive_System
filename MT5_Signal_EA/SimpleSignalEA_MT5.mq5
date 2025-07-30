@@ -1557,8 +1557,8 @@ void CheckSignalTPs(int signal_index)
         {
             active_signals[signal_index].tp3_hit = true;
             
-            // Update chart line colors when TP3 is hit
-            UpdateTPLineColors(signal_index);
+            // Remove TP3 line when hit (and all remaining TP lines since trade will close)
+            RemoveTPLines(active_signals[signal_index].message_id);
             
             Print("[TP3_HIT] ", active_signals[signal_index].symbol, " - Closing full position");
             Print("[TP3_EXECUTION] Target: ", DoubleToString(active_signals[signal_index].tp3, 5), 
@@ -1589,8 +1589,8 @@ void CheckSignalTPs(int signal_index)
         {
             active_signals[signal_index].tp2_hit = true;
             
-            // Update chart line colors when TP2 is hit
-            UpdateTPLineColors(signal_index);
+            // Remove TP2 line when hit
+            RemoveIndividualTPLine(active_signals[signal_index].message_id, "TP2");
             
             Print("[TP2_HIT] ", active_signals[signal_index].symbol, " - Closing 50% and moving SL to TP1");
             Print("[TP2_EXECUTION] Target: ", DoubleToString(active_signals[signal_index].tp2, 5), 
@@ -1631,8 +1631,8 @@ void CheckSignalTPs(int signal_index)
         {
             active_signals[signal_index].tp1_hit = true;
             
-            // Update chart line colors when TP1 is hit
-            UpdateTPLineColors(signal_index);
+            // Remove TP1 line when hit
+            RemoveIndividualTPLine(active_signals[signal_index].message_id, "TP1");
             
             Print("[TP1_EXECUTION] Target: ", DoubleToString(active_signals[signal_index].tp1, 5), 
                   " | Actual: ", DoubleToString(current_price, 5), 
@@ -1701,6 +1701,10 @@ void CheckSignalTPs(int signal_index)
         if(active_signals[signal_index].tp3 > 0 && !active_signals[signal_index].tp3_hit && current_price <= active_signals[signal_index].tp3)
         {
             active_signals[signal_index].tp3_hit = true;
+            
+            // Remove TP3 line when hit (and all remaining TP lines since trade will close)
+            RemoveTPLines(active_signals[signal_index].message_id);
+            
             Print("[TP3_HIT] ", active_signals[signal_index].symbol, " - Closing full position");
             Print("[TP3_EXECUTION] Target: ", DoubleToString(active_signals[signal_index].tp3, 5), 
                   " | Actual: ", DoubleToString(current_price, 5), 
@@ -1729,6 +1733,10 @@ void CheckSignalTPs(int signal_index)
         if(active_signals[signal_index].tp2 > 0 && !active_signals[signal_index].tp2_hit && current_price <= active_signals[signal_index].tp2)
         {
             active_signals[signal_index].tp2_hit = true;
+            
+            // Remove TP2 line when hit
+            RemoveIndividualTPLine(active_signals[signal_index].message_id, "TP2");
+            
             Print("[TP2_HIT] ", active_signals[signal_index].symbol, " - Closing 50% and moving SL to TP1");
             Print("[TP2_EXECUTION] Target: ", DoubleToString(active_signals[signal_index].tp2, 5), 
                   " | Actual: ", DoubleToString(current_price, 5), 
@@ -1767,6 +1775,10 @@ void CheckSignalTPs(int signal_index)
         if(!active_signals[signal_index].tp1_hit && current_price <= active_signals[signal_index].tp1)
         {
             active_signals[signal_index].tp1_hit = true;
+            
+            // Remove TP1 line when hit
+            RemoveIndividualTPLine(active_signals[signal_index].message_id, "TP1");
+            
             Print("[TP1_EXECUTION] Target: ", DoubleToString(active_signals[signal_index].tp1, 5), 
                   " | Actual: ", DoubleToString(current_price, 5), 
                   " | Slippage: ", DoubleToString(active_signals[signal_index].tp1 - current_price, 5), " points (SELL)");
@@ -2250,17 +2262,13 @@ bool RecoverSignalFromServer(int message_id)
         if(EnableDebugLogging)
             Print("[CHART_RECOVERY] DEBUG: About to call CreateTPLines(", index, ")");
         CreateTPLines(index);
-        // Update line colors based on current TP hit status
-        UpdateTPLineColors(index);
         if(EnableDebugLogging)
             Print("[CHART_RECOVERY] Created TP lines for recovered signal ", message_id);
     }
     else if(TPLinesExist(message_id))
     {
-        // Lines already exist, just update colors based on current status
-        UpdateTPLineColors(index);
         if(EnableDebugLogging)
-            Print("[CHART_RECOVERY] Updated existing TP line colors for signal ", message_id);
+            Print("[CHART_RECOVERY] TP lines already exist for signal ", message_id);
     }
     
     return true;
@@ -2843,6 +2851,10 @@ void CheckSignalTPsTest(int signal_index)
            current_price >= active_signals[signal_index].tp3)
         {
             active_signals[signal_index].tp3_hit = true;
+            
+            // Remove all TP lines when trade closes in test mode
+            RemoveTPLines(active_signals[signal_index].message_id);
+            
             CloseTestPosition(pos_index, "TP3_HIT");
             active_signals[signal_index].is_active = false;
             
@@ -2864,6 +2876,9 @@ void CheckSignalTPsTest(int signal_index)
         {
             active_signals[signal_index].tp2_hit = true;
             active_signals[signal_index].tp2_partial_done = true;
+            
+            // Remove TP2 line when hit
+            RemoveIndividualTPLine(active_signals[signal_index].message_id, "TP2");
             
             // Close 50% of position
             double original_volume = test_positions[pos_index].volume;
@@ -2890,6 +2905,9 @@ void CheckSignalTPsTest(int signal_index)
         if(!active_signals[signal_index].tp1_hit && current_price >= active_signals[signal_index].tp1)
         {
             active_signals[signal_index].tp1_hit = true;
+            
+            // Remove TP1 line when hit
+            RemoveIndividualTPLine(active_signals[signal_index].message_id, "TP1");
             
             // Single TP signal - close entire position
             if(active_signals[signal_index].tp2 <= 0 && active_signals[signal_index].tp3 <= 0)
@@ -3353,6 +3371,27 @@ void CreateTPLines(int signal_index)
     
     if(EnableDebugLogging)
         Print("[CHART_LINES] COMPLETED: Successfully created TP lines for signal ", magic, " (", symbol, ")");
+}
+
+//+------------------------------------------------------------------+
+//| Remove individual TP line when hit                              |
+//+------------------------------------------------------------------+
+void RemoveIndividualTPLine(int magic_number, string tp_level)
+{
+    string line_name = StringFormat("%s-%d", tp_level, magic_number);
+    
+    // Check all open charts and remove the specific line
+    long chart_id = ChartFirst();
+    while(chart_id != -1)
+    {
+        if(ObjectFind(chart_id, line_name) >= 0) 
+        {
+            ObjectDelete(chart_id, line_name);
+            if(EnableDebugLogging)
+                Print("[CHART_LINES] Removed ", tp_level, " line for signal ", magic_number);
+        }
+        chart_id = ChartNext(chart_id);
+    }
 }
 
 //+------------------------------------------------------------------+
