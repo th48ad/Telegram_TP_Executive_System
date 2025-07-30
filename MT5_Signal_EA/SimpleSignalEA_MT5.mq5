@@ -3166,17 +3166,33 @@ int CalculateSymbolSpecificDeviation(string symbol)
 //+------------------------------------------------------------------+
 long FindChartBySymbol(string symbol)
 {
+    if(EnableDebugLogging)
+        Print("[CHART_SEARCH] DEBUG: Searching for chart with symbol '", symbol, "'");
+    
     // Start with the first chart
     long chart_id = ChartFirst();
+    int chart_count = 0;
+    
     while(chart_id != -1)
     {
         string chart_symbol = ChartSymbol(chart_id);
+        chart_count++;
+        
+        if(EnableDebugLogging)
+            Print("[CHART_SEARCH] DEBUG: Chart ", chart_count, " - ID: ", chart_id, ", Symbol: '", chart_symbol, "'");
+        
         if(chart_symbol == symbol)
         {
+            if(EnableDebugLogging)
+                Print("[CHART_SEARCH] DEBUG: MATCH FOUND! Chart ID ", chart_id, " has symbol '", chart_symbol, "'");
             return chart_id;
         }
         chart_id = ChartNext(chart_id);
     }
+    
+    if(EnableDebugLogging)
+        Print("[CHART_SEARCH] DEBUG: No match found. Checked ", chart_count, " charts. Returning chart_id=0 (current chart)");
+    
     return 0; // Return current chart if symbol not found
 }
 
@@ -3199,11 +3215,22 @@ void CreateTPLines(int signal_index)
     
     // Find chart ID for this specific symbol
     long chart_id = FindChartBySymbol(symbol);
+    if(EnableDebugLogging)
+    {
+        Print("[CHART_LINES] DEBUG: Looking for chart with symbol: '", symbol, "'");
+        Print("[CHART_LINES] DEBUG: FindChartBySymbol returned chart_id: ", chart_id);
+    }
+    
     if(chart_id == 0)
     {
         if(EnableDebugLogging)
             Print("[CHART_LINES] No chart found for symbol ", symbol, " - lines will be created on current chart");
         chart_id = 0; // Use current chart as fallback
+    }
+    else
+    {
+        if(EnableDebugLogging)
+            Print("[CHART_LINES] Found chart ID ", chart_id, " for symbol ", symbol);
     }
     
     // Create unique line names
@@ -3219,18 +3246,31 @@ void CreateTPLines(int signal_index)
     // Create TP1 line
     if(signal.tp1 > 0)
     {
-        ObjectCreate(chart_id, tp1_name, OBJ_HLINE, 0, 0, signal.tp1);
+        bool tp1_created = ObjectCreate(chart_id, tp1_name, OBJ_HLINE, 0, 0, signal.tp1);
+        if(EnableDebugLogging)
+            Print("[CHART_LINES] DEBUG: TP1 ObjectCreate(", chart_id, ", '", tp1_name, "', price=", signal.tp1, ") = ", tp1_created ? "SUCCESS" : "FAILED");
+            
         ObjectSetInteger(chart_id, tp1_name, OBJPROP_COLOR, tp1_color);
         ObjectSetInteger(chart_id, tp1_name, OBJPROP_STYLE, STYLE_DASH);
         ObjectSetInteger(chart_id, tp1_name, OBJPROP_WIDTH, 2);
         ObjectSetString(chart_id, tp1_name, OBJPROP_TEXT, StringFormat("TP1 (%.5f)", signal.tp1));
         ObjectSetInteger(chart_id, tp1_name, OBJPROP_BACK, false); // Foreground
+        
+        if(EnableDebugLogging)
+        {
+            // Verify object was actually created
+            long obj_find = ObjectFind(chart_id, tp1_name);
+            Print("[CHART_LINES] DEBUG: TP1 ObjectFind(", chart_id, ", '", tp1_name, "') = ", obj_find);
+        }
     }
     
     // Create TP2 line
     if(signal.tp2 > 0)
     {
-        ObjectCreate(chart_id, tp2_name, OBJ_HLINE, 0, 0, signal.tp2);
+        bool tp2_created = ObjectCreate(chart_id, tp2_name, OBJ_HLINE, 0, 0, signal.tp2);
+        if(EnableDebugLogging)
+            Print("[CHART_LINES] DEBUG: TP2 ObjectCreate(", chart_id, ", '", tp2_name, "', price=", signal.tp2, ") = ", tp2_created ? "SUCCESS" : "FAILED");
+            
         ObjectSetInteger(chart_id, tp2_name, OBJPROP_COLOR, tp2_color);
         ObjectSetInteger(chart_id, tp2_name, OBJPROP_STYLE, STYLE_DASH);
         ObjectSetInteger(chart_id, tp2_name, OBJPROP_WIDTH, 2);
@@ -3241,7 +3281,10 @@ void CreateTPLines(int signal_index)
     // Create TP3 line  
     if(signal.tp3 > 0)
     {
-        ObjectCreate(chart_id, tp3_name, OBJ_HLINE, 0, 0, signal.tp3);
+        bool tp3_created = ObjectCreate(chart_id, tp3_name, OBJ_HLINE, 0, 0, signal.tp3);
+        if(EnableDebugLogging)
+            Print("[CHART_LINES] DEBUG: TP3 ObjectCreate(", chart_id, ", '", tp3_name, "', price=", signal.tp3, ") = ", tp3_created ? "SUCCESS" : "FAILED");
+            
         ObjectSetInteger(chart_id, tp3_name, OBJPROP_COLOR, tp3_color);
         ObjectSetInteger(chart_id, tp3_name, OBJPROP_STYLE, STYLE_DASH);
         ObjectSetInteger(chart_id, tp3_name, OBJPROP_WIDTH, 2);
