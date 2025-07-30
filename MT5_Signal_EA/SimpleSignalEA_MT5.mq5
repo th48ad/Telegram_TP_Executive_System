@@ -2230,8 +2230,18 @@ bool RecoverSignalFromServer(int message_id)
     
     // Recover chart TP lines if position exists and lines don't already exist
     ulong existing_position = FindPositionByMagic(message_id);
+    if(EnableDebugLogging)
+    {
+        Print("[CHART_RECOVERY] DEBUG: Checking TP lines for signal ", message_id);
+        Print("[CHART_RECOVERY] DEBUG: existing_position = ", existing_position);
+        Print("[CHART_RECOVERY] DEBUG: TPLinesExist = ", TPLinesExist(message_id) ? "true" : "false");
+        Print("[CHART_RECOVERY] DEBUG: index = ", index, ", ArraySize(active_signals) = ", ArraySize(active_signals));
+    }
+    
     if(existing_position > 0 && !TPLinesExist(message_id))
     {
+        if(EnableDebugLogging)
+            Print("[CHART_RECOVERY] DEBUG: About to call CreateTPLines(", index, ")");
         CreateTPLines(index);
         // Update line colors based on current TP hit status
         UpdateTPLineColors(index);
@@ -3201,14 +3211,28 @@ long FindChartBySymbol(string symbol)
 //+------------------------------------------------------------------+
 void CreateTPLines(int signal_index)
 {
+    if(EnableDebugLogging)
+        Print("[CHART_LINES] DEBUG: CreateTPLines called with signal_index = ", signal_index, ", ArraySize = ", ArraySize(active_signals));
+    
     if(signal_index < 0 || signal_index >= ArraySize(active_signals))
+    {
+        if(EnableDebugLogging)
+            Print("[CHART_LINES] ERROR: Invalid signal_index ", signal_index, " (must be 0-", ArraySize(active_signals)-1, ")");
         return;
+    }
         
     SignalState signal = active_signals[signal_index];
     
+    if(EnableDebugLogging)
+        Print("[CHART_LINES] DEBUG: Signal details - symbol='", signal.symbol, "', is_active=", signal.is_active, ", tp1=", signal.tp1);
+    
     // Only create lines for active signals with valid TP levels
     if(!signal.is_active || signal.tp1 <= 0)
+    {
+        if(EnableDebugLogging)
+            Print("[CHART_LINES] DEBUG: Skipping TP lines - signal not active or no TP1");
         return;
+    }
     
     string symbol = signal.symbol;
     int magic = signal.message_id;
@@ -3293,7 +3317,7 @@ void CreateTPLines(int signal_index)
     }
     
     if(EnableDebugLogging)
-        Print("[CHART_LINES] Created TP lines for signal ", magic, " (", symbol, ")");
+        Print("[CHART_LINES] COMPLETED: Successfully created TP lines for signal ", magic, " (", symbol, ")");
 }
 
 //+------------------------------------------------------------------+
