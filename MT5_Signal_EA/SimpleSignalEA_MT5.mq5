@@ -3299,7 +3299,7 @@ void CreateTPLines(int signal_index)
             
         ObjectSetInteger(chart_id, tp1_name, OBJPROP_COLOR, tp1_color);
         ObjectSetInteger(chart_id, tp1_name, OBJPROP_STYLE, STYLE_DASH);
-        ObjectSetInteger(chart_id, tp1_name, OBJPROP_WIDTH, 2);
+        ObjectSetInteger(chart_id, tp1_name, OBJPROP_WIDTH, 1);
         ObjectSetString(chart_id, tp1_name, OBJPROP_TEXT, StringFormat("TP1 (%.5f)", signal.tp1));
         ObjectSetInteger(chart_id, tp1_name, OBJPROP_BACK, false); // Foreground
         
@@ -3324,7 +3324,7 @@ void CreateTPLines(int signal_index)
             
         ObjectSetInteger(chart_id, tp2_name, OBJPROP_COLOR, tp2_color);
         ObjectSetInteger(chart_id, tp2_name, OBJPROP_STYLE, STYLE_DASH);
-        ObjectSetInteger(chart_id, tp2_name, OBJPROP_WIDTH, 2);
+        ObjectSetInteger(chart_id, tp2_name, OBJPROP_WIDTH, 1);
         ObjectSetString(chart_id, tp2_name, OBJPROP_TEXT, StringFormat("TP2 (%.5f)", signal.tp2));
         ObjectSetInteger(chart_id, tp2_name, OBJPROP_BACK, false); // Foreground
     }
@@ -3342,7 +3342,7 @@ void CreateTPLines(int signal_index)
             
         ObjectSetInteger(chart_id, tp3_name, OBJPROP_COLOR, tp3_color);
         ObjectSetInteger(chart_id, tp3_name, OBJPROP_STYLE, STYLE_DASH);
-        ObjectSetInteger(chart_id, tp3_name, OBJPROP_WIDTH, 2);
+        ObjectSetInteger(chart_id, tp3_name, OBJPROP_WIDTH, 1);
         ObjectSetString(chart_id, tp3_name, OBJPROP_TEXT, StringFormat("TP3 (%.5f)", signal.tp3));
         ObjectSetInteger(chart_id, tp3_name, OBJPROP_BACK, false); // Foreground
     }
