@@ -61,9 +61,10 @@ struct SignalState
     string action;          // BUY or SELL
     double entry_price;     // Entry price
     double stop_loss;       // Original stop loss
-    double tp1;            // Take profit 1
+    double tp1;            // Take profit 1 (current - may be 0 if hit)
     double tp2;            // Take profit 2  
     double tp3;            // Take profit 3
+    double original_tp1;   // Original TP1 value (for breakeven moves)
     bool tp1_hit;          // TP1 reached flag
     bool tp2_hit;          // TP2 reached flag
     bool tp3_hit;          // TP3 reached flag
@@ -237,6 +238,7 @@ int OnInit()
         active_signals[i].tp1 = 0.0;
         active_signals[i].tp2 = 0.0;
         active_signals[i].tp3 = 0.0;
+        active_signals[i].original_tp1 = 0.0;
         active_signals[i].tp1_hit = false;
         active_signals[i].tp2_hit = false;
         active_signals[i].tp3_hit = false;
@@ -500,6 +502,7 @@ void ProcessNewSignal(CJAVal &signal_json)
     active_signals[index].tp1 = tp1;
     active_signals[index].tp2 = tp2;
     active_signals[index].tp3 = tp3;
+    active_signals[index].original_tp1 = tp1;  // Store original TP1 for breakeven moves
     active_signals[index].tp1_hit = false;
     active_signals[index].tp2_hit = false;
     active_signals[index].tp3_hit = false;
@@ -1225,6 +1228,7 @@ void CleanupInactiveSignals()
         active_signals[i].tp1 = 0.0;
         active_signals[i].tp2 = 0.0;
         active_signals[i].tp3 = 0.0;
+        active_signals[i].original_tp1 = 0.0;
         active_signals[i].tp1_hit = false;
         active_signals[i].tp2_hit = false;
         active_signals[i].tp3_hit = false;
@@ -1613,15 +1617,19 @@ void CheckSignalTPs(int signal_index)
                 {
                     active_signals[signal_index].tp2_partial_done = true;
                     
-                    // Move SL to TP1
-                    if(trade.PositionModify(ticket, active_signals[signal_index].tp1, 0))
+                    // Move SL to original TP1 (breakeven)
+                    if(trade.PositionModify(ticket, active_signals[signal_index].original_tp1, 0))
                     {
-                        Print("[SUCCESS] SL moved to TP1: ", active_signals[signal_index].tp1);
+                        Print("[SUCCESS] SL moved to breakeven (original TP1): ", active_signals[signal_index].original_tp1);
+                    }
+                    else
+                    {
+                        Print("[ERROR] Failed to move SL to breakeven: ", active_signals[signal_index].original_tp1);
                     }
                     
                     ReportEvent(active_signals[signal_index].signal_id, "tp2_hit", 
                                "price=" + DoubleToString(current_price, 5) + 
-                               ",closed_50_percent=true,sl_moved_to_tp1=" + DoubleToString(active_signals[signal_index].tp1, 5));
+                               ",closed_50_percent=true,sl_moved_to_entry=" + DoubleToString(active_signals[signal_index].original_tp1, 5));
                 }
             }
         }
@@ -1758,15 +1766,19 @@ void CheckSignalTPs(int signal_index)
                 {
                     active_signals[signal_index].tp2_partial_done = true;
                     
-                    // Move SL to TP1
-                    if(trade.PositionModify(ticket, active_signals[signal_index].tp1, 0))
+                    // Move SL to original TP1 (breakeven)
+                    if(trade.PositionModify(ticket, active_signals[signal_index].original_tp1, 0))
                     {
-                        Print("[SUCCESS] SL moved to TP1: ", active_signals[signal_index].tp1);
+                        Print("[SUCCESS] SL moved to breakeven (original TP1): ", active_signals[signal_index].original_tp1);
+                    }
+                    else
+                    {
+                        Print("[ERROR] Failed to move SL to breakeven: ", active_signals[signal_index].original_tp1);
                     }
                     
                     ReportEvent(active_signals[signal_index].signal_id, "tp2_hit", 
                                "price=" + DoubleToString(current_price, 5) + 
-                               ",closed_50_percent=true,sl_moved_to_tp1=" + DoubleToString(active_signals[signal_index].tp1, 5));
+                               ",closed_50_percent=true,sl_moved_to_entry=" + DoubleToString(active_signals[signal_index].original_tp1, 5));
                 }
             }
         }
@@ -2147,6 +2159,21 @@ bool RecoverSignalFromServer(int message_id)
         active_signals[index].tp2 = (json["tp2"].type != jtNULL && json["tp2"].ToDbl() > 0) ? json["tp2"].ToDbl() : 0.0;
         active_signals[index].tp3 = (json["tp3"].type != jtNULL && json["tp3"].ToDbl() > 0) ? json["tp3"].ToDbl() : 0.0;
         
+        // Get original TP1 from recovery_state (webserver provides this!)
+        if(json["recovery_state"]["original_tp1"].type != jtNULL)
+        {
+            active_signals[index].original_tp1 = json["recovery_state"]["original_tp1"].ToDbl();
+            if(EnableDebugLogging)
+                Print("[RECOVERY] ✅ Got original TP1 from recovery_state: ", active_signals[index].original_tp1);
+        }
+        else
+        {
+            // Fallback: use current SL if available
+            active_signals[index].original_tp1 = active_signals[index].stop_loss;
+            if(EnableDebugLogging)
+                Print("[RECOVERY] ⚠️  Using current SL as original TP1 fallback: ", active_signals[index].original_tp1);
+        }
+        
         // Restore TP hit flags from server state with validation and fallback inference
         if(json["recovery_state"]["tp1_hit"].type != jtUNDEF)
             active_signals[index].tp1_hit = json["recovery_state"]["tp1_hit"].ToBool();
@@ -2220,6 +2247,7 @@ bool RecoverSignalFromServer(int message_id)
         active_signals[index].tp1 = json["tp1"].ToDbl();
         active_signals[index].tp2 = json["tp2"].ToDbl();
         active_signals[index].tp3 = json["tp3"].ToDbl();
+        active_signals[index].original_tp1 = json["tp1"].ToDbl();  // Store original TP1
     active_signals[index].tp1_hit = false;
     active_signals[index].tp2_hit = false;
     active_signals[index].tp3_hit = false;
@@ -2472,6 +2500,7 @@ void CreateLiveTestSignal()
     active_signals[index].tp1 = tp1;
     active_signals[index].tp2 = tp2;
     active_signals[index].tp3 = tp3;
+    active_signals[index].original_tp1 = tp1;  // Store original TP1 for breakeven moves
     active_signals[index].tp1_hit = false;
     active_signals[index].tp2_hit = false;
     active_signals[index].tp3_hit = false;
@@ -2742,6 +2771,7 @@ void GenerateTestSignal()
     active_signals[index].tp1 = tp1;
     active_signals[index].tp2 = tp2;
     active_signals[index].tp3 = tp3;
+    active_signals[index].original_tp1 = tp1;  // Store original TP1 for breakeven moves
     active_signals[index].tp1_hit = false;
     active_signals[index].tp2_hit = false;
     active_signals[index].tp3_hit = false;
@@ -2884,11 +2914,11 @@ void CheckSignalTPsTest(int signal_index)
             double original_volume = test_positions[pos_index].volume;
             test_positions[pos_index].volume = NormalizeDouble(original_volume * 0.5, 2);
             
-            // Move SL to TP1
-            test_positions[pos_index].sl = active_signals[signal_index].tp1;
+            // Move SL to original TP1 (breakeven)
+            test_positions[pos_index].sl = active_signals[signal_index].original_tp1;
             
-            Print("[TEST_TP2] Hit at ", current_price, " - 50% closed, SL moved to TP1: ", 
-                  active_signals[signal_index].tp1);
+            Print("[TEST_TP2] Hit at ", current_price, " - 50% closed, SL moved to breakeven (original TP1): ", 
+                  active_signals[signal_index].original_tp1);
             tests_passed++;
             
             // Report to web server if enabled
@@ -2896,7 +2926,7 @@ void CheckSignalTPsTest(int signal_index)
             {
                 ReportEvent(active_signals[signal_index].signal_id, "tp2_hit", 
                            "price=" + DoubleToString(current_price, 5) + 
-                           ",closed_50_percent=true,sl_moved_to_tp1=" + DoubleToString(active_signals[signal_index].tp1, 5) +
+                           ",closed_50_percent=true,sl_moved_to_entry=" + DoubleToString(active_signals[signal_index].original_tp1, 5) +
                            ",test_mode=true");
             }
         }
