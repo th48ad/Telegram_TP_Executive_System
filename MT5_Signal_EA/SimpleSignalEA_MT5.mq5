@@ -1205,6 +1205,10 @@ void CleanupInactiveSignals()
         {
             // Signal is inactive - count it for cleanup
             cleaned_count++;
+            
+            // Remove TP lines for cleaned up signals
+            RemoveTPLines(active_signals[read_index].message_id);
+            
             if(EnableDebugLogging && cleaned_count <= 3) // Only show first 3 to avoid spam
             {
                 Print("[CLEANUP] Removing inactive signal: ", active_signals[read_index].signal_id, 
@@ -1336,6 +1340,9 @@ void AnalyzeCloseReason(int signal_index, double close_price, ENUM_DEAL_REASON d
         ReportEvent(active_signals[signal_index].signal_id, "sl_hit", 
                    "price=" + DoubleToString(close_price, 5) + 
                    ",loss_points=" + DoubleToString(loss_points, 2), active_signals[signal_index].message_id);
+        
+        // Remove all TP lines when position is closed by SL
+        RemoveTPLines(active_signals[signal_index].message_id);
         
         active_signals[signal_index].is_active = false;
         return;
