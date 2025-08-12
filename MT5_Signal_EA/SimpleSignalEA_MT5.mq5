@@ -19,6 +19,7 @@ input bool      EnableTrading = true;               // Enable actual trading
 input bool      EnableDebugLogging = true;          // Enable debug logging
 input bool      EnableStatisticsLogging = false;    // Enable periodic statistics logging (every 5 min)
 input bool      EnableSmartOrderConversion = true;  // Convert invalid limit orders to market orders
+input double    ProximityThresholdPips = 5.0;    // Convert to market order if entry within X pips of current price
 input int       MarketOrderDeviation = 20;       // Market order base deviation (points: Gold=5x, Crypto=3x, Forex=1x)
 input bool      EnableSounds = true;                // Enable sound alerts
 input double    DefaultLotSize = 0.01;              // Default lot size (0 = use risk %)
@@ -136,6 +137,7 @@ int OnInit()
     if(EnableSmartOrderConversion)
     {
         Print("📈 Smart Conversion: Invalid limit orders → Market orders (when price moved favorably)");
+        Print("🎯 Proximity Conversion: Limit → Market when entry within ", ProximityThresholdPips, " pips of current price");
         Print("📊 Market Order Deviation: ", MarketOrderDeviation, " base points (symbol-specific multipliers applied)");
         Print("   🥇 Precious Metals (XAUUSD): ", MarketOrderDeviation * 5, " points (5x multiplier)");
         Print("   💰 Crypto (ETHUSD): ", MarketOrderDeviation * 3, " points (3x multiplier)");
@@ -600,6 +602,10 @@ void PlaceLimitOrder(int signal_index)
         else
         {
             Print("[SUCCESS] Added symbol to Market Watch: ", trading_symbol);
+            
+            // Give broker time to provide quotes for newly added symbol
+            Print("[INFO] Waiting for price quotes to become available...");
+            Sleep(2000); // Wait 2 seconds for broker to provide quotes
         }
     }
     
@@ -641,13 +647,38 @@ void PlaceLimitOrder(int signal_index)
     Print("[DEBUG] Symbol: ", trading_symbol, " | Bid: ", DoubleToString(current_bid, symbol_info.Digits()), 
           " | Ask: ", DoubleToString(current_ask, symbol_info.Digits()));
     
-    // Validate prices
+    // Validate prices with retry mechanism for newly added symbols
     if(current_bid <= 0 || current_ask <= 0)
     {
-        Print("[ERROR] Invalid prices - Bid: ", current_bid, " Ask: ", current_ask);
-        ReportEvent(active_signals[signal_index].signal_id, "error", 
-                   "Invalid market prices", active_signals[signal_index].message_id);
-        return;
+        Print("[WARNING] Invalid prices on first attempt - Bid: ", current_bid, " Ask: ", current_ask);
+        Print("[INFO] Retrying after refreshing rates (symbol may be newly added to Market Watch)");
+        
+        // Wait briefly and try refreshing rates again
+        Sleep(1000);
+        if(!symbol_info.RefreshRates())
+        {
+            Print("[ERROR] Failed to refresh rates on retry for: ", trading_symbol);
+        }
+        
+        // Get prices again
+        current_bid = symbol_info.Bid();
+        current_ask = symbol_info.Ask();
+        
+        Print("[RETRY] Symbol: ", trading_symbol, " | Bid: ", DoubleToString(current_bid, symbol_info.Digits()), 
+              " | Ask: ", DoubleToString(current_ask, symbol_info.Digits()));
+        
+        // Final validation
+        if(current_bid <= 0 || current_ask <= 0)
+        {
+            Print("[ERROR] Still invalid prices after retry - Bid: ", current_bid, " Ask: ", current_ask);
+            ReportEvent(active_signals[signal_index].signal_id, "error", 
+                       "Invalid market prices after retry", active_signals[signal_index].message_id);
+            return;
+        }
+        else
+        {
+            Print("[SUCCESS] Valid prices obtained after retry");
+        }
     }
     
     // Set up basic request parameters
@@ -684,6 +715,53 @@ void PlaceLimitOrder(int signal_index)
         {
             // Normal mode: Use BUY LIMIT (below market)
             req.type = ORDER_TYPE_BUY_LIMIT;
+            
+            // Enhanced Smart Conversion: Check if entry is very close to current price
+            if(EnableSmartOrderConversion)
+            {
+                // Calculate pip size for proximity check
+                double symbol_point = SymbolInfoDouble(trading_symbol, SYMBOL_POINT);
+                int symbol_digits = (int)SymbolInfoInteger(trading_symbol, SYMBOL_DIGITS);
+                double pip_size = symbol_point;
+                if(symbol_digits == 5 || symbol_digits == 3) 
+                    pip_size = symbol_point * 10; // Adjust for 5-digit/3-digit quotes
+                
+                // Special handling for JPY pairs
+                if(StringFind(trading_symbol, "JPY") >= 0)
+                    pip_size = 0.01;
+                
+                // Define immediate execution zone (convert to market if within this range)
+                double proximity_threshold = ProximityThresholdPips * pip_size;
+                double price_distance = MathAbs(active_signals[signal_index].entry_price - current_ask);
+                
+                if(price_distance <= proximity_threshold && active_signals[signal_index].entry_price < current_ask)
+                {
+                    Print("[PROXIMITY_CONVERT] Entry very close to market - Distance: ", 
+                          DoubleToString(price_distance / pip_size, 1), " pips");
+                    Print("[PROXIMITY_CONVERT] Converting BUY LIMIT to MARKET for immediate execution");
+                    Print("[PROXIMITY_CONVERT] Entry: ", active_signals[signal_index].entry_price, 
+                          " | Ask: ", current_ask, " | Threshold: ", ProximityThresholdPips, " pips");
+                    
+                    // Calculate symbol-specific deviation
+                    int symbol_deviation = CalculateSymbolSpecificDeviation(active_signals[signal_index].symbol);
+                    
+                    // Convert to market order
+                    req.action = TRADE_ACTION_DEAL;
+                    req.type = ORDER_TYPE_BUY;
+                    req.price = current_ask;
+                    req.type_filling = GetSymbolFillType(trading_symbol);
+                    req.type_time = 0;
+                    req.expiration = 0;
+                    req.deviation = symbol_deviation;
+                    
+                    // Update entry price in signal for TP calculations
+                    active_signals[signal_index].entry_price = current_ask;
+                    
+                    Print("[PROXIMITY_CONVERT] New order type: MARKET BUY @ ", current_ask, 
+                          " | Deviation: ", symbol_deviation, " points | Symbol: ", active_signals[signal_index].symbol);
+                }
+            }
+            
             // Validate BUY LIMIT: entry must be below current ask
             if(active_signals[signal_index].entry_price >= current_ask)
             {
@@ -748,6 +826,53 @@ void PlaceLimitOrder(int signal_index)
         {
             // Normal mode: Use SELL LIMIT (above market)
             req.type = ORDER_TYPE_SELL_LIMIT;
+            
+            // Enhanced Smart Conversion: Check if entry is very close to current price
+            if(EnableSmartOrderConversion)
+            {
+                // Calculate pip size for proximity check
+                double symbol_point = SymbolInfoDouble(trading_symbol, SYMBOL_POINT);
+                int symbol_digits = (int)SymbolInfoInteger(trading_symbol, SYMBOL_DIGITS);
+                double pip_size = symbol_point;
+                if(symbol_digits == 5 || symbol_digits == 3) 
+                    pip_size = symbol_point * 10; // Adjust for 5-digit/3-digit quotes
+                
+                // Special handling for JPY pairs
+                if(StringFind(trading_symbol, "JPY") >= 0)
+                    pip_size = 0.01;
+                
+                // Define immediate execution zone (convert to market if within this range)
+                double proximity_threshold = ProximityThresholdPips * pip_size;
+                double price_distance = MathAbs(active_signals[signal_index].entry_price - current_bid);
+                
+                if(price_distance <= proximity_threshold && active_signals[signal_index].entry_price > current_bid)
+                {
+                    Print("[PROXIMITY_CONVERT] Entry very close to market - Distance: ", 
+                          DoubleToString(price_distance / pip_size, 1), " pips");
+                    Print("[PROXIMITY_CONVERT] Converting SELL LIMIT to MARKET for immediate execution");
+                    Print("[PROXIMITY_CONVERT] Entry: ", active_signals[signal_index].entry_price, 
+                          " | Bid: ", current_bid, " | Threshold: ", ProximityThresholdPips, " pips");
+                    
+                    // Calculate symbol-specific deviation
+                    int symbol_deviation = CalculateSymbolSpecificDeviation(active_signals[signal_index].symbol);
+                    
+                    // Convert to market order
+                    req.action = TRADE_ACTION_DEAL;
+                    req.type = ORDER_TYPE_SELL;
+                    req.price = current_bid;
+                    req.type_filling = GetSymbolFillType(trading_symbol);
+                    req.type_time = 0;
+                    req.expiration = 0;
+                    req.deviation = symbol_deviation;
+                    
+                    // Update entry price in signal for TP calculations
+                    active_signals[signal_index].entry_price = current_bid;
+                    
+                    Print("[PROXIMITY_CONVERT] New order type: MARKET SELL @ ", current_bid, 
+                          " | Deviation: ", symbol_deviation, " points | Symbol: ", active_signals[signal_index].symbol);
+                }
+            }
+            
             // Validate SELL LIMIT: entry must be above current bid
             if(active_signals[signal_index].entry_price <= current_bid)
             {
