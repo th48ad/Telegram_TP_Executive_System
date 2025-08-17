@@ -1207,10 +1207,93 @@ double CalculateLotSize(const SignalState &signal)
                 }
                 else
                 {
-                    // Non-USD pairs: Use broker's value or fallback
-                    point_value = 1.0; // Conservative fallback
+                    // Non-USD pairs (cross pairs): Calculate pip value based on quote currency conversion to USD
+                    // For GBPCAD: Pip value = (0.0001 × 100,000) / (USD/CAD rate)
+                    // For EURGBP: Pip value = (0.0001 × 100,000) × (GBP/USD rate)
+                    
+                    string base_currency = StringSubstr(signal.symbol, 0, 3);
+                    string quote_currency = StringSubstr(signal.symbol, 3, 3);
+                    
+                    double contract_size = 100000.0;
+                    double pip_size_decimal = 0.0001;
+                    double calculated_pip_value = 1.0; // Default fallback
+                    
+                    // Try to calculate pip value using quote currency conversion
+                    string usd_quote_pair = "USD" + quote_currency + SymbolSuffix; // e.g., USDCAD.PRO
+                    string quote_usd_pair = quote_currency + "USD" + SymbolSuffix; // e.g., CADUSD.PRO
+                    
                     if(EnableDebugLogging)
-                        Print("[PIP_VALUE] Non-USD pair: ", signal.symbol, " | Using fallback: $1");
+                    {
+                        Print("[PIP_VALUE] Cross pair detected: ", signal.symbol, " (", base_currency, "/", quote_currency, ")");
+                        Print("[PIP_VALUE] Attempting conversion via ", usd_quote_pair, " or ", quote_usd_pair);
+                    }
+                    
+                    // Method 1: Try USD/QUOTE pair (e.g., USD/CAD for GBP/CAD)
+                    if(SymbolSelect(usd_quote_pair, true))
+                    {
+                        CSymbolInfo usd_quote_info;
+                        if(usd_quote_info.Name(usd_quote_pair) && usd_quote_info.RefreshRates())
+                        {
+                            double usd_quote_rate = (usd_quote_info.Bid() + usd_quote_info.Ask()) / 2.0;
+                            if(usd_quote_rate > 0)
+                            {
+                                // For GBP/CAD: pip_value = (0.0001 × 100,000) / USD/CAD rate
+                                calculated_pip_value = (pip_size_decimal * contract_size) / usd_quote_rate;
+                                
+                                if(EnableDebugLogging)
+                                {
+                                    Print("[PIP_VALUE] Using ", usd_quote_pair, " rate: ", DoubleToString(usd_quote_rate, 5));
+                                    Print("[PIP_VALUE] Calculated pip value: $", DoubleToString(calculated_pip_value, 4), " per pip per lot");
+                                }
+                            }
+                        }
+                    }
+                    // Method 2: Try QUOTE/USD pair (e.g., CAD/USD for GBP/CAD) - less common but possible
+                    else if(SymbolSelect(quote_usd_pair, true))
+                    {
+                        CSymbolInfo quote_usd_info;
+                        if(quote_usd_info.Name(quote_usd_pair) && quote_usd_info.RefreshRates())
+                        {
+                            double quote_usd_rate = (quote_usd_info.Bid() + quote_usd_info.Ask()) / 2.0;
+                            if(quote_usd_rate > 0)
+                            {
+                                // For GBP/CAD with CAD/USD: pip_value = (0.0001 × 100,000) × CAD/USD rate
+                                calculated_pip_value = (pip_size_decimal * contract_size) * quote_usd_rate;
+                                
+                                if(EnableDebugLogging)
+                                {
+                                    Print("[PIP_VALUE] Using ", quote_usd_pair, " rate: ", DoubleToString(quote_usd_rate, 5));
+                                    Print("[PIP_VALUE] Calculated pip value: $", DoubleToString(calculated_pip_value, 4), " per pip per lot");
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Final validation and fallback
+                    if(calculated_pip_value > 0.1 && calculated_pip_value < 50.0)
+                    {
+                        point_value = calculated_pip_value;
+                        if(EnableDebugLogging)
+                            Print("[PIP_VALUE] Cross pair calculation successful: $", DoubleToString(point_value, 4));
+                    }
+                    else
+                    {
+                        // Use broker's value if available and reasonable
+                        double broker_pip_value = SymbolInfoDouble(signal.symbol, SYMBOL_TRADE_TICK_VALUE);
+                        if(broker_pip_value > 0.1 && broker_pip_value < 50.0)
+                        {
+                            point_value = broker_pip_value;
+                            if(EnableDebugLogging)
+                                Print("[PIP_VALUE] Using broker's tick value: $", DoubleToString(point_value, 4));
+                        }
+                        else
+                        {
+                            // Conservative fallback - but higher than $1 for safety
+                            point_value = 5.0; // Safer fallback for cross pairs
+                            if(EnableDebugLogging)
+                                Print("[PIP_VALUE] Cross pair fallback: $", DoubleToString(point_value, 2), " (could not calculate precisely)");
+                        }
+                    }
                 }
             }
             
